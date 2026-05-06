@@ -480,7 +480,16 @@ class Decision(models.Model):
     # Metadata
     confidence_score = models.FloatField(blank=True, null=True)
     extraction_notes = models.TextField(blank=True, null=True)
-    
+
+    # Drift detection
+    last_reinforced_at = models.DateTimeField(blank=True, null=True)
+    drift_risk = models.CharField(
+        max_length=10,
+        choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High')],
+        blank=True,
+        null=True
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

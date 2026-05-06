@@ -132,10 +132,128 @@ If `sentence-transformers` is not installed, every similarity call falls back to
 
 ---
 
+---
+
+## Change 2: Decision Drift Detection
+
+### What changed
+
+- `database/knowledge_base/models.py` — two new fields on `Decision`
+- `database/scripts/migrate_add_drift_fields.sql` — column migration for live DB
+- `database/scripts/check_drift.py` — new standalone script
+
+---
+
+### The problem it solves
+
+A decision recorded in a meeting six months ago does not automatically stay valid. The team may have quietly changed direction — new commits reference a different library, tickets use different terminology — but the decision record still shows `status: active`. There is no signal that the decision has silently aged out of the codebase.
+
+---
+
+### New fields on `Decision`
+
+```python
+last_reinforced_at = models.DateTimeField(blank=True, null=True)
+drift_risk = models.CharField(
+    max_length=10,
+    choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High')],
+    blank=True, null=True
+)
+```
+
+**`last_reinforced_at`** — the most recent date any of the decision's `tags` (or title keywords, as fallback) appeared in a commit message or Jira ticket summary. Updated by `check_drift.py`.
+
+**`drift_risk`** — computed from days elapsed since `last_reinforced_at`:
+
+| Days since last reinforcement | `drift_risk` |
+|---|---|
+| < 30 days | `low` |
+| 30 – 90 days | `medium` |
+| > 90 days | `high` |
+| never seen in commits/tickets | `high` |
+
+---
+
+### How `check_drift.py` works
+
+```
+For each active decision:
+  1. Collect search terms
+       → decision.tags if present
+       → else: meaningful words from decision.title (len > 3, not stop words)
+
+  2. Scan for the most recent reinforcement
+       → GitCommit.objects.filter(message__icontains=term).order_by('-commit_date')
+       → JiraTicket.objects.filter(summary__icontains=term).order_by('-updated_date')
+       → Take the latest date across all terms and both tables
+
+  3. Compute drift_risk from days elapsed
+
+  4. Write last_reinforced_at + drift_risk back to the Decision record
+```
+
+Output example:
+
+```
+══════════════════════════════════════════════════════════════════════
+DRIFT CHECK   (computing and saving, 15 active decisions)
+══════════════════════════════════════════════════════════════════════
+
+  ── TECHNOLOGY ──
+  [LOW   ]  Use React for frontend                    last seen: 2026-01-28  (8d ago)
+  [LOW   ]  Use JWT for authentication                last seen: 2026-01-25  (11d ago)
+  [HIGH  ]  Use Material UI component library         last seen: never
+
+  ── ARCHITECTURE ──
+  [MEDIUM]  PostgreSQL as primary database            last seen: 2025-11-20  (71d ago)
+  [HIGH  ]  ECS Fargate for deployment                last seen: never
+
+──────────────────────────────────────────────────────────────────────
+  Low risk    : 6
+  Medium risk : 4
+  High risk   : 5
+```
+
+---
+
+### SQL migration
+
+```sql
+ALTER TABLE decisions
+    ADD COLUMN IF NOT EXISTS last_reinforced_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS drift_risk         VARCHAR(10);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_drift_risk
+    ON decisions (drift_risk)
+    WHERE drift_risk IS NOT NULL;
+```
+
+Run once against the live DB:
+```bash
+psql $DATABASE_URL -f scripts/migrate_add_drift_fields.sql
+```
+
+---
+
+### How to phrase this on stage
+
+**One-liner (15 seconds):**
+> "Every decision has a freshness signal. We scan incoming commits and tickets for the decision's keywords. If nothing in the codebase has referenced that decision's technology in 90 days, we flag it as high-drift — the architecture may have moved on without the decision record catching up."
+
+**If a technical judge asks how reinforcement is determined:**
+> "We use the decision's tag array as the search vocabulary. For each tag, we query commit messages and ticket summaries for the most recent occurrence. The latest match across all tags becomes the reinforcement timestamp. If no tags are set, we fall back to extracting content words from the decision title — terms longer than three characters that aren't stop words."
+
+**If asked about false positives (a tag like 'database' appearing in unrelated commits):**
+> "That's a real trade-off. Broad tags like 'database' will get reinforced by almost any data-related commit, which biases toward low-risk. The counter is specificity in tagging — 'postgresql' or 'jwt' are much cleaner signals than 'auth' or 'database'. In a production version we'd score reinforcement by term specificity, essentially an IDF weighting. For the demo, the tags in our synthetic data are specific enough that this isn't a visible issue."
+
+**The non-technical hook:**
+> "Imagine you hired a senior engineer two years ago. They made twenty architectural decisions. Then they left. Every one of those decisions is in LIGHTHOUSE — and LIGHTHOUSE tells you which ones the team is still actively building on, and which ones the codebase has quietly walked away from. That's institutional memory with a health check."
+
+---
+
 ## Upcoming Changes (this branch)
 
 | # | Change | Status |
 |---|---|---|
-| 2 | Decision drift detection (`drift_risk`, `last_reinforced_at`) | planned |
 | 3 | LLM conflict detection across active decisions | planned |
 | 4 | Provenance chain via `EntityReference` traversal | planned |
