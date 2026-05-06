@@ -17,6 +17,7 @@
 | 4 | LLM conflict detection | **Done** | `check_conflicts.py`, `migrate_add_conflicts_table.sql` |
 | 5 | Provenance chain traversal | **Done** | `provenance.py` |
 | 6 | Chatbot wired to conflicts + provenance | **Done** | `chatbot/` — all 6 files updated |
+| 7 | Confluence documentation drift detection | **Done** | `check_confluence_drift.py`, `migrate_add_confluence_drift_fields.sql` |
 
 ---
 
@@ -28,6 +29,7 @@ Active            : 43
 Superseded        : 1
 Conflicts detected: 2  (1 high, 1 medium)
 Meetings summarized: 5 / 5
+Confluence pages  : 7  (1 high drift, 6 low drift — topics cached)
 
 Supersession chain:
   "Use Material UI for components" → "Switch to Tailwind CSS"
@@ -152,9 +154,19 @@ Does SQLAlchemy conflict with anything?
 
 ### 5. Useful one-liners
 ```bash
-# Run drift check (populates drift_risk fields)
+# Run decision drift check (populates drift_risk on decisions)
 python3.12 scripts/check_drift.py
 python3.12 scripts/check_drift.py --report
+
+# Run Confluence documentation drift check
+python3.12 scripts/check_confluence_drift.py          # first run: calls LLM, caches topics
+python3.12 scripts/check_confluence_drift.py --report # subsequent runs: no LLM call
+python3.12 scripts/check_confluence_drift.py --refresh # re-extract topics (LLM called again)
+
+# Chatbot: ask about doc staleness
+# "which docs are outdated?"
+# "are any documentation pages stale?"
+# "show me doc drift status"
 
 # Run conflict report
 python3.12 scripts/check_conflicts.py --report
@@ -177,6 +189,7 @@ python3.12 scripts/summarize_meetings.py --all
 python3.12 scripts/extract_decisions.py --all
 python3.12 scripts/check_conflicts.py
 python3.12 scripts/check_drift.py
+python3.12 scripts/check_confluence_drift.py
 ```
 
 ---
