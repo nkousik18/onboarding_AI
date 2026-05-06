@@ -289,19 +289,40 @@ class OnboardingChatbot:
         self._log("\n1. Classifying intent...")
         intent = self.classifier.classify(resolved_query)
         
+        # Fix 2: low-confidence general follow-up — inherit previous intent/entities
+        if (intent.intent_type == IntentType.GENERAL_QUERY and
+                intent.confidence <= 0.4 and
+                self.history.messages):
+            for msg in reversed(self.history.messages):
+                if msg.role == 'user' and msg.intent and msg.intent != 'general_query':
+                    intent = ClassifiedIntent(
+                        intent_type=IntentType(msg.intent),
+                        confidence=0.75,
+                        entities=intent.entities or msg.entities,
+                        original_query=query
+                    )
+                    self._log(f"   [follow-up] Inherited intent '{msg.intent}' from history")
+                    break
+
         # Combine entities
         all_entities = inferred_entities.copy()
         for e in intent.entities:
             if e not in all_entities:
                 all_entities.append(e)
-        
+
         # Map role/topic to person names
         role_persons = self._map_role_to_person(query, all_entities)
         all_entities.extend(role_persons)
-        
-        # Use current topic if no entities found
+
+        # Use current topic if no entities found — but don't bleed sprint numbers
+        # into unrelated intents (e.g. asking "key decisions" after a sprint query)
         if not all_entities and self.history.current_topic:
-            all_entities = [self.history.current_topic]
+            topic = self.history.current_topic
+            is_sprint_intent = intent.intent_type in (
+                IntentType.SPRINT_SUMMARY_QUERY, IntentType.STATUS_QUERY
+            )
+            if not (topic.isdigit() and not is_sprint_intent):
+                all_entities = [topic]
         
         self._log(f"   Intent: {intent.intent_type.value}")
         self._log(f"   Confidence: {intent.confidence:.2f}")
@@ -327,13 +348,26 @@ class OnboardingChatbot:
         history_summary = self.history.get_context_summary()
         topic_context = self.history.get_current_topic_context()
         last_response = self.history.get_last_assistant_response()
-        
+
+        # Only inject the last response verbatim when the current query looks like
+        # a follow-up (short, uses reference words, or same intent as previous turn).
+        # Avoids the LLM preferring stale sprint/person context over fresh retrieval.
+        prev_intent = next(
+            (m.intent for m in reversed(self.history.messages) if m.role == 'user' and m.intent),
+            None
+        )
+        is_followup = (
+            len(query.split()) <= 8 or
+            prev_intent == intent.intent_type.value or
+            any(w in query.lower() for w in ['more', 'details', 'tell me more', 'explain', 'elaborate'])
+        )
+
         context_parts = []
         if topic_context:
             context_parts.append(topic_context)
         if history_summary:
             context_parts.append(f"PREVIOUS CONVERSATION:\n{history_summary}")
-        if last_response and len(last_response) < 1000:
+        if last_response and len(last_response) < 1000 and is_followup:
             context_parts.append(f"MY LAST RESPONSE (for follow-up context):\n{last_response[:800]}")
         context_parts.append(f"RELEVANT INFORMATION:\n{context}")
         
@@ -344,9 +378,9 @@ class OnboardingChatbot:
         # Step 4: Generate response
         self._log("\n4. Generating response...")
         
-        has_real_content = len(documents) > 0 and not any(
-            doc.metadata.get('error') for doc in documents
-        )
+        # Real content = at least one non-error document
+        # (a mix of valid + error docs is still answerable, e.g. sprint 2 found + sprint 3 not planned)
+        has_real_content = any(not doc.metadata.get('error') for doc in documents)
         
         if has_real_content:
             prompt = self._build_conversational_prompt(full_context, query, intent.intent_type.value)

@@ -158,19 +158,33 @@ class SQLRetriever(BaseRetriever):
         return registry.normalize_name(name) or name
     
     def _extract_sprint_number(self, query: str, entities: List[str]) -> Optional[int]:
-        """Extract sprint number from query or entities."""
+        """Extract the first sprint number from query or entities."""
         for entity in entities:
             if isinstance(entity, str) and entity.isdigit():
                 return int(entity)
             match = re.search(r'(\d+)', str(entity))
             if match:
                 return int(match.group(1))
-        
+
         match = re.search(r'sprint\s*(\d+)', query.lower())
         if match:
             return int(match.group(1))
-        
+
         return None
+
+    def _extract_all_sprint_numbers(self, query: str, entities: List[str]) -> List[int]:
+        """Extract all sprint numbers mentioned in a query (e.g. 'sprint 2 and sprint 3')."""
+        nums = []
+        for entity in entities:
+            if isinstance(entity, str) and entity.isdigit():
+                n = int(entity)
+                if n not in nums:
+                    nums.append(n)
+        for m in re.finditer(r'sprint\s*(\d+)', query.lower()):
+            n = int(m.group(1))
+            if n not in nums:
+                nums.append(n)
+        return nums
     
     def retrieve_by_id(self, source_type: str, source_id: str) -> Optional[Document]:
         """Retrieve a specific document by ID."""
@@ -308,32 +322,33 @@ class SQLRetriever(BaseRetriever):
     # =========================================
     
     def _retrieve_sprint_summary(self, query: str, entities: List[str], limit: int) -> List[Document]:
-        """Retrieve sprint summary."""
-        documents = []
-        
-        sprint_num = self._extract_sprint_number(query, entities)
-        
-        if not sprint_num:
+        """Retrieve sprint summary. Handles multiple sprint numbers in one query."""
+        sprint_nums = self._extract_all_sprint_numbers(query, entities)
+
+        if not sprint_nums:
             return self._retrieve_all_sprints_overview(limit)
-        
-        try:
-            sprint = Sprint.objects.get(sprint_number=sprint_num)
-        except Sprint.DoesNotExist:
-            return [Document(
-                content=f"Sprint {sprint_num} not found.",
-                title=f"Sprint {sprint_num} Not Found",
-                source_type='error',
-                source_id='',
-                source_table='sprints',
-                date=None,
-                related_tickets=[],
-                related_people=[],
-                metadata={'error': True}
-            )]
-        
-        sprint_data = self._aggregate_sprint_data(sprint)
-        documents.append(self._sprint_data_to_document(sprint, sprint_data))
-        
+
+        documents = []
+        for sprint_num in sprint_nums:
+            try:
+                sprint = Sprint.objects.get(sprint_number=sprint_num)
+                sprint_data = self._aggregate_sprint_data(sprint)
+                documents.append(self._sprint_data_to_document(sprint, sprint_data))
+            except Sprint.DoesNotExist:
+                latest = Sprint.objects.order_by('-sprint_number').first()
+                latest_msg = f" The latest sprint is Sprint {latest.sprint_number}." if latest else ""
+                documents.append(Document(
+                    content=f"Sprint {sprint_num} hasn't been planned yet.{latest_msg}",
+                    title=f"Sprint {sprint_num} — Not Yet Planned",
+                    source_type='error',
+                    source_id='',
+                    source_table='sprints',
+                    date=None,
+                    related_tickets=[],
+                    related_people=[],
+                    metadata={'error': True}
+                ))
+
         return documents
     
     def _aggregate_sprint_data(self, sprint: Sprint) -> dict:
@@ -609,30 +624,57 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
     # =========================================
     
     def _retrieve_decisions(self, query: str, entities: List[str], limit: int) -> List[Document]:
-        """Retrieve decisions."""
+        """Retrieve decisions.
+
+        When no specific entity is mentioned (e.g. 'what are the key decisions?'),
+        order by decision_date ascending so foundational Sprint-1 decisions surface
+        first rather than the most recently extracted records.
+        """
         documents = []
-        
         q_filter = Q()
-        
+
         for entity in entities:
             if isinstance(entity, str):
                 q_filter |= Q(title__icontains=entity)
                 q_filter |= Q(description__icontains=entity)
                 q_filter |= Q(rationale__icontains=entity)
                 q_filter |= Q(alternatives_considered__icontains=entity)
-        
+
+        has_specific_filter = bool(entities)
+
+        _DECISION_STOPWORDS = {
+            'what', 'are', 'were', 'key', 'the', 'all', 'list', 'show', 'give',
+            'tell', 'taken', 'made', 'main', 'decision', 'decisions', 'about',
+            'have', 'been', 'that', 'this', 'some', 'any', 'our', 'your',
+        }
         if not entities:
-            words = query.lower().split()
-            for word in words:
-                if len(word) > 3:
-                    q_filter |= Q(title__icontains=word)
-                    q_filter |= Q(rationale__icontains=word)
-        
-        decisions = Decision.objects.filter(q_filter).order_by('-decision_date')[:limit]
-        
+            topic_words = [
+                w for w in query.lower().split()
+                if len(w) > 3 and w not in _DECISION_STOPWORDS
+            ]
+            for word in topic_words:
+                q_filter |= Q(title__icontains=word)
+                q_filter |= Q(rationale__icontains=word)
+
+        # Unfiltered "list all" query — ascending date surfaces original decisions first
+        order = 'decision_date' if not has_specific_filter else '-decision_date'
+        decisions = Decision.objects.filter(status='active').filter(q_filter).order_by(order)
+
+        # Deduplicate by normalised title to avoid showing 3 copies of "Use JWT"
+        seen_titles: set = set()
         for decision in decisions:
-            documents.append(self._decision_to_document(decision))
-        
+            normalised = re.sub(r'\s+', ' ', decision.title.lower().strip())
+            # Strip common action prefixes before deduplication
+            for prefix in ('use ', 'using ', 'adopt ', 'switch to ', 'switch from '):
+                if normalised.startswith(prefix):
+                    normalised = normalised[len(prefix):]
+                    break
+            if normalised not in seen_titles:
+                seen_titles.add(normalised)
+                documents.append(self._decision_to_document(decision))
+            if len(documents) >= limit:
+                break
+
         return documents
     
     def _decision_to_document(self, decision: Decision) -> Document:

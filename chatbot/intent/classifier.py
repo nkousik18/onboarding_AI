@@ -208,29 +208,45 @@ class IntentClassifier:
     def _is_sprint_summary_query(self, query_lower: str, entities: List[str]) -> bool:
         """Check if query is asking for a sprint summary."""
         has_sprint_number = any(e.isdigit() for e in entities if isinstance(e, str))
-        
+
         summary_keywords = [
             'summary', 'summarize', 'overview', 'recap', 'highlights',
             'accomplishments', 'report', 'insights', 'analysis',
             'what happened in sprint', 'tell me about sprint'
         ]
-        
+
         has_sprint_word = 'sprint' in query_lower
         has_summary_keyword = any(kw in query_lower for kw in summary_keywords)
-        
+
         sprint_summary_pattern = bool(re.search(
             r'(summary|overview|recap|summarize).{0,20}sprint\s*\d+|sprint\s*\d+.{0,20}(summary|overview|recap)',
             query_lower
         ))
-        
+
         what_happened_pattern = bool(re.search(
             r'what.{0,10}(happened|occurred|done|achieved).{0,10}sprint\s*\d+',
             query_lower
         ))
-        
+
+        # "who are responsible in sprint 2", "who worked on sprint 1", "sprint 2 team"
+        who_sprint_pattern = bool(re.search(
+            r'(who|team|people|members?|responsible|contributors?).{0,25}sprint\s*\d+'
+            r'|sprint\s*\d+.{0,25}(who|team|responsible|members?)',
+            query_lower
+        ))
+
+        # "what is scheduled for sprint 3", "status on sprint 2"
+        status_sprint_pattern = bool(re.search(
+            r'(scheduled|planned|status|progress).{0,20}sprint\s*\d+'
+            r'|sprint\s*\d+.{0,20}(scheduled|planned|status|progress)',
+            query_lower
+        ))
+
         return (
             sprint_summary_pattern or
             what_happened_pattern or
+            who_sprint_pattern or
+            status_sprint_pattern or
             (has_sprint_word and has_summary_keyword and has_sprint_number)
         )
     
