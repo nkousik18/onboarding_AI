@@ -287,22 +287,16 @@ class OnboardingChatbot:
         
         # Step 1: Classify intent
         self._log("\n1. Classifying intent...")
-        intent = self.classifier.classify(resolved_query)
-        
-        # Fix 2: low-confidence general follow-up — inherit previous intent/entities
-        if (intent.intent_type == IntentType.GENERAL_QUERY and
-                intent.confidence <= 0.4 and
-                self.history.messages):
-            for msg in reversed(self.history.messages):
-                if msg.role == 'user' and msg.intent and msg.intent != 'general_query':
-                    intent = ClassifiedIntent(
-                        intent_type=IntentType(msg.intent),
-                        confidence=0.75,
-                        entities=intent.entities or msg.entities,
-                        original_query=query
-                    )
-                    self._log(f"   [follow-up] Inherited intent '{msg.intent}' from history")
-                    break
+
+        # Give the LLM one line of context so follow-ups resolve correctly.
+        prev_context = None
+        prev_user_msgs = [m for m in self.history.messages if m.role == 'user' and m.intent]
+        if prev_user_msgs:
+            last = prev_user_msgs[-1]
+            topic_part = last.topic or (', '.join(last.entities[:2]) if last.entities else 'general')
+            prev_context = f"{last.intent} about {topic_part}"
+
+        intent = self.classifier.classify(resolved_query, prev_context=prev_context)
 
         # Combine entities
         all_entities = inferred_entities.copy()

@@ -1,43 +1,233 @@
 """
-Intent Classifier for Onboarding AI Chatbot (v3)
+Intent Classifier for Onboarding AI Chatbot (v4)
 
-Fixes:
-1. Better person name detection
-2. List query support
-3. Role/topic to person mapping
+Replaces the rule-based keyword scorer with a single Groq LLM parse call.
+The LLM reads the query and returns a structured retrieval plan (intent +
+entities) in ~150 tokens. Previous turn context is included so follow-ups
+("his commits", "give me more") resolve correctly.
+
+Falls back to keyword rules if the LLM is unavailable (rate-limited, offline).
 """
 
 import re
 import sys
 import os
+import json
 from typing import List, Tuple, Optional
 
 from .types import (
     IntentType,
     ClassifiedIntent,
-    INTENT_CONFIGS,
-    ENTITY_PATTERNS,
     TECH_TERMS,
 )
 
+# ── LLM parse helpers ────────────────────────────────────────────────────────
+
+_INTENT_DESCRIPTIONS = [
+    ('decision_query',       'why a tech/architecture decision was made — "why React?", "rationale for JWT", "why Postgres?"'),
+    ('person_query',         'what a person worked on, who worked on a topic, or who to contact — "Marcus\'s commits", "who did frontend?", "all commits by Marcus", "whom should I reach out for react help?"'),
+    ('sprint_summary_query', 'sprint overview, team, or status — "sprint 2 summary", "who was in sprint 1", "what happened in sprint 3"'),
+    ('timeline_query',       'when things happened, chronological history — "when was X decided?", "project timeline"'),
+    ('howto_query',          'how to do something, setup guides, onboarding — "how to run locally", "new employee first steps"'),
+    ('status_query',         'ticket or work item status — "status of ONBOARD-14", "what is open?", "is auth done?"'),
+    ('ticket_query',         'details about a specific Jira ticket — "tell me about ONBOARD-14"'),
+    ('meeting_query',        'what was discussed in a meeting — "sprint 1 planning meeting", "meeting minutes"'),
+    ('conflict_query',       'conflicting or contradictory decisions — "any conflicts?", "does X conflict with Y?"'),
+    ('provenance_query',     'where a decision came from — "trace JWT", "where did Tailwind come from?", "background behind SQLAlchemy"'),
+    ('doc_drift_query',      'whether documentation is stale — "which docs are outdated?", "are docs current?", "doc drift"'),
+    ('general_query',        'anything else'),
+]
+
+_PARSE_SYSTEM = (
+    "You are a query parser for an engineering onboarding knowledge base. "
+    "Return only valid JSON. No explanation, no markdown."
+)
+
+_DEFAULT_PEOPLE = (
+    "Sarah Chen, Marcus Thompson, Lisa Park, "
+    "Priya Sharma, James O'Brien, Dave Rossi"
+)
+
+
+def _build_parse_prompt(
+    query: str,
+    people_str: str,
+    prev_context: Optional[str],
+) -> str:
+    intent_lines = "\n".join(f"  {k}: {v}" for k, v in _INTENT_DESCRIPTIONS)
+    prev_line = f"\nPrevious turn: {prev_context}" if prev_context else ""
+    return (
+        f"Intents:\n{intent_lines}\n\n"
+        f"Team members: {people_str}{prev_line}\n\n"
+        f"Rules:\n"
+        f"- Use person_query for ANY question about who did work, who to contact, or a named person's activity.\n"
+        f"- Set the 'person' field ONLY if a name from the team list is explicitly in the query.\n"
+        f"  Leave 'person' null for 'who should I contact' or 'who works on X' queries — the retriever will find them.\n"
+        f"- Set topic to the main technology or concept (e.g. 'react', 'jwt', 'deployment').\n"
+        f"- Set sprint only if a sprint number is mentioned.\n\n"
+        f'Return ONLY this JSON:\n'
+        f'{{\n'
+        f'  "intent": "<intent name>",\n'
+        f'  "person": "<full name from team list or null>",\n'
+        f'  "topic": "<main tech or concept or null>",\n'
+        f'  "sprint": "<number as string or null>",\n'
+        f'  "ticket_id": "<ONBOARD-XX or null>",\n'
+        f'  "confidence": <0.0-1.0>\n'
+        f'}}\n\n'
+        f"Query: {query}"
+    )
+
+
+def _parse_llm_json(raw: str) -> Optional[dict]:
+    """Extract the JSON object from an LLM response, tolerating markdown fences."""
+    raw = raw.strip()
+    # Strip markdown fences if present
+    raw = re.sub(r'^```(?:json)?\s*', '', raw)
+    raw = re.sub(r'\s*```$', '', raw)
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group())
+    except json.JSONDecodeError:
+        return None
+
+
+def _build_entities(parsed: dict, registry) -> List[str]:
+    """Flatten LLM-returned structured fields into the entity list the retriever expects."""
+    entities: List[str] = []
+    seen: set = set()
+
+    def add(val):
+        if val and str(val).lower() not in seen:
+            entities.append(str(val))
+            seen.add(str(val).lower())
+
+    # Ticket ID first (highest precision)
+    ticket = parsed.get('ticket_id')
+    if ticket and re.match(r'ONBOARD-\d+', str(ticket), re.IGNORECASE):
+        add(ticket.upper())
+
+    # Sprint number
+    sprint = parsed.get('sprint')
+    if sprint and str(sprint).strip().isdigit():
+        add(str(sprint).strip())
+
+    # Person — normalise to canonical name via registry
+    person = parsed.get('person')
+    if person:
+        canonical = None
+        if registry:
+            try:
+                canonical = registry.normalize_name(person)
+            except Exception:
+                pass
+        add(canonical or person)
+
+    # Topic
+    topic = parsed.get('topic')
+    if topic:
+        add(str(topic).lower().strip())
+
+    return entities
+
+
+# ── Keyword-rule fallback (kept from v3, simplified) ─────────────────────────
+
+def _keyword_classify(query: str, person_names: List[str], first_names: List[str], registry) -> ClassifiedIntent:  # noqa: ARG001
+    """Rule-based fallback used when the LLM is unavailable."""
+    ql = query.lower()
+    entities = _rule_extract_entities(query, person_names, registry)
+
+    # Hard patterns first
+    if re.search(r'ONBOARD-\d+', query, re.IGNORECASE):
+        ticket_ids = re.findall(r'ONBOARD-\d+', query, re.IGNORECASE)
+        return ClassifiedIntent(IntentType.TICKET_QUERY, 0.95,
+                                [t.upper() for t in ticket_ids], query)
+
+    if any(p in ql for p in ['conflict', 'contradict', 'inconsisten', 'clash']):
+        return ClassifiedIntent(IntentType.CONFLICT_QUERY, 0.88, entities, query)
+
+    if any(p in ql for p in ['where did', 'come from', 'trace', 'provenance', 'background behind']):
+        return ClassifiedIntent(IntentType.PROVENANCE_QUERY, 0.88, entities, query)
+
+    if re.search(r'(doc|documentation).{0,20}(stale|outdated|current)|which docs|doc drift', ql):
+        return ClassifiedIntent(IntentType.DOC_DRIFT_QUERY, 0.88, entities, query)
+
+    if re.search(r'sprint\s*\d+', ql):
+        return ClassifiedIntent(IntentType.SPRINT_SUMMARY_QUERY, 0.85, entities, query)
+
+    # Person detection
+    has_person = any(n in ql for n in person_names)
+    who_role = re.search(
+        r'who\s+(worked|did|made|wrote)|contact.*for\s+(frontend|backend)|who.{0,15}responsible',
+        ql
+    )
+    if has_person or who_role:
+        return ClassifiedIntent(IntentType.PERSON_QUERY, 0.82, entities, query)
+
+    # Keyword scoring (condensed)
+    _kw = {
+        IntentType.DECISION_QUERY:  ['why', 'decision', 'chose', 'rationale', 'reason', 'switch'],
+        IntentType.HOWTO_QUERY:     ['how', 'setup', 'install', 'guide', 'steps', 'first steps'],
+        IntentType.STATUS_QUERY:    ['status', 'progress', 'done', 'open', 'blocked', 'complete'],
+        IntentType.MEETING_QUERY:   ['meeting', 'standup', 'discussed', 'planning', 'retro'],
+        IntentType.TIMELINE_QUERY:  ['when', 'timeline', 'history', 'date', 'recent', 'before'],
+    }
+    scores = {intent: sum(1 for kw in kws if kw in ql) for intent, kws in _kw.items()}
+    best = max(scores, key=scores.get)
+    if scores[best] > 0:
+        conf = min(0.5 + scores[best] * 0.1, 0.75)
+        return ClassifiedIntent(best, conf, entities, query)
+
+    return ClassifiedIntent(IntentType.GENERAL_QUERY, 0.3, entities, query)
+
+
+def _rule_extract_entities(query: str, person_names: List[str], registry) -> List[str]:
+    """Minimal entity extraction for the fallback path."""
+    entities: List[str] = []
+    ql = query.lower()
+    seen: set = set()
+
+    def add(val: str):
+        if val.lower() not in seen:
+            entities.append(val)
+            seen.add(val.lower())
+
+    for t in re.findall(r'ONBOARD-\d+', query, re.IGNORECASE):
+        add(t.upper())
+    for s in re.findall(r'[Ss]print\s*(\d+)', query):
+        add(s)
+
+    if registry:
+        for variant in person_names:
+            if variant in ql:
+                canonical = registry.normalize_name(variant)
+                if canonical:
+                    add(canonical)
+    for term in TECH_TERMS:
+        if term in ql:
+            add(term)
+
+    return entities
+
+
+# ── Main classifier ───────────────────────────────────────────────────────────
 
 class IntentClassifier:
-    """Rule-based intent classifier with improved person detection."""
+    """
+    LLM-first intent classifier (v4).
 
-    # Role keywords that trigger person-related query detection
-    ROLE_KEYWORDS = [
-        'frontend', 'front-end', 'ui', 'react',
-        'backend', 'back-end', 'api', 'authentication', 'auth',
-        'database', 'db', 'schema',
-        'devops', 'ci/cd', 'deployment', 'pipeline',
-    ]
+    Calls Groq with a ~280-token prompt to parse intent + entities in one shot.
+    Falls back to keyword rules if the LLM is unavailable.
+    """
 
     def __init__(self):
-        self.intent_configs = INTENT_CONFIGS
-        self.entity_patterns = ENTITY_PATTERNS
-        self.tech_terms = TECH_TERMS
-
-        # Load person name variants from DB registry (graceful fallback if unavailable)
+        # Load person registry
+        self._registry = None
+        self._person_names: List[str] = []
+        self._first_names: List[str] = []
+        self._people_str: str = _DEFAULT_PEOPLE
         try:
             _chatbot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             if _chatbot_dir not in sys.path:
@@ -46,416 +236,134 @@ class IntentClassifier:
             self._registry = registry
             self._person_names = registry.name_variants_for_classifier()
             self._first_names = registry.get_all_first_names()
+            all_names = registry.get_all_names()
+            if all_names:
+                self._people_str = ', '.join(all_names)
         except Exception:
-            self._registry = None
-            self._person_names = []
-            self._first_names = []
-    
-    def classify(self, query: str) -> ClassifiedIntent:
-        """Classify a user query into an intent type."""
-        query_lower = query.lower()
-        
-        # Step 1: Extract entities
-        entities = self._extract_entities(query)
-        
-        # Step 2: Check for list query
-        if self._is_list_query(query_lower):
-            return ClassifiedIntent(
-                intent_type=IntentType.GENERAL_QUERY,  # Will be handled by retriever
-                confidence=0.85,
-                entities=entities,
-                original_query=query
-            )
-        
-        # Step 3: Check for sprint summary query
-        if self._is_sprint_summary_query(query_lower, entities):
-            return ClassifiedIntent(
-                intent_type=IntentType.SPRINT_SUMMARY_QUERY,
-                confidence=0.90,
-                entities=entities,
-                original_query=query
-            )
+            pass
 
-        # Step 3b: Check for conflict query
-        if self._is_conflict_query(query_lower):
-            return ClassifiedIntent(
-                intent_type=IntentType.CONFLICT_QUERY,
-                confidence=0.92,
-                entities=entities,
-                original_query=query
+        # Groq client for LLM parse
+        self._llm_client = None
+        self._llm_available = False
+        try:
+            from dotenv import load_dotenv
+            _db_env = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                '..', 'database', '.env'
             )
+            load_dotenv(os.path.normpath(_db_env))
+            from openai import OpenAI
+            key = os.getenv('GROQ_API_KEY')
+            if key:
+                self._llm_client = OpenAI(
+                    api_key=key,
+                    base_url='https://api.groq.com/openai/v1',
+                )
+                self._llm_available = True
+        except Exception:
+            pass
 
-        # Step 3c: Check for provenance query
-        if self._is_provenance_query(query_lower):
-            return ClassifiedIntent(
-                intent_type=IntentType.PROVENANCE_QUERY,
-                confidence=0.92,
-                entities=entities,
-                original_query=query
-            )
-
-        # Step 3d: Check for doc drift query
-        if self._is_doc_drift_query(query_lower):
-            return ClassifiedIntent(
-                intent_type=IntentType.DOC_DRIFT_QUERY,
-                confidence=0.92,
-                entities=entities,
-                original_query=query
-            )
-
-        # Step 4: Check for person query (IMPROVED)
-        if self._is_person_query(query_lower, entities):
-            return ClassifiedIntent(
-                intent_type=IntentType.PERSON_QUERY,
-                confidence=0.90,
-                entities=entities,
-                original_query=query
-            )
-        
-        # Step 5: Check for direct ticket reference
-        ticket_ids = [e for e in entities if 'ONBOARD-' in e.upper()]
-        if ticket_ids and not self._has_decision_keywords(query_lower):
-            return ClassifiedIntent(
-                intent_type=IntentType.TICKET_QUERY,
-                confidence=0.95,
-                entities=entities,
-                original_query=query
-            )
-        
-        # Step 6: Score all intents
-        scores = self._score_intents(query_lower)
-        
-        # Step 7: Get best intent
-        best_intent, score = self._get_best_intent(scores)
-        
-        # Step 8: Calculate confidence
-        confidence = self._calculate_confidence(score, entities, query_lower)
-        
-        return ClassifiedIntent(
-            intent_type=best_intent,
-            confidence=confidence,
-            entities=entities,
-            original_query=query
-        )
-    
-    def _is_list_query(self, query_lower: str) -> bool:
-        """Check if query is asking for a list."""
-        list_patterns = [
-            'list all', 'show all', 'what are all',
-            'all the', 'available', 'what pages',
-            'what documents', 'what decisions',
-            'what meetings', 'what tickets',
-            'how many'
-        ]
-        return any(pattern in query_lower for pattern in list_patterns)
-    
-    def _is_person_query(self, query_lower: str, entities: List[str]) -> bool:
+    def classify(self, query: str, prev_context: Optional[str] = None) -> ClassifiedIntent:
         """
-        Check if query is asking about a person.
+        Classify a query into an intent + entities.
 
-        Improved to detect:
-        1. Direct person names (from registry)
-        2. Role keywords (frontend, backend, etc.)
-        3. "who" questions about roles
+        prev_context: one-line summary of the previous turn, e.g.
+            "person_query about Marcus Thompson"
+        Used so the LLM understands follow-ups like "his commits" or "tell me more".
         """
-        # Check for person name variants (loaded from DB registry)
-        entities_lower = [e.lower() for e in entities]
-        has_person = any(
-            name in query_lower or name in entities_lower
-            for name in self._person_names
+        if self._llm_available:
+            result = self._llm_parse(query, prev_context)
+            if result is not None:
+                return result
+
+        # LLM unavailable or returned invalid JSON — use keyword rules
+        return _keyword_classify(
+            query, self._person_names, self._first_names, self._registry
         )
-        
-        if has_person:
-            return True
-        
-        # Check for "who" + role pattern
-        who_patterns = [
-            r'who\s+(worked|works|is working|did|does|made|created|wrote|authored)',
-            r'who\s+is\s+(responsible|assigned|the\s+author)',
-            r'contact.*for\s+(frontend|backend|api|database)',
-            r'(frontend|backend|api|database).*contact',
-        ]
-        
-        for pattern in who_patterns:
-            if re.search(pattern, query_lower):
-                return True
-        
-        # Check for role keywords with person-related questions
-        person_question_words = ['who', 'contact', 'reach', 'ask', 'talk to', 'worked on', 'responsible']
-        has_role_keyword = any(role in query_lower for role in self.ROLE_KEYWORDS)
-        has_person_question = any(word in query_lower for word in person_question_words)
-        
-        if has_role_keyword and has_person_question:
-            return True
-        
-        # Check for possessive patterns with first names from registry
-        if self._first_names:
-            first_names_re = '|'.join(re.escape(n.lower()) for n in self._first_names if n)
-            if re.search(rf"({first_names_re})('s|s')", query_lower):
-                return True
-        if re.search(r"(his|her)\s+(commits|tickets|work|contributions)", query_lower):
-            return True
-        
-        return False
-    
-    def _is_conflict_query(self, query_lower: str) -> bool:
-        conflict_patterns = [
-            'conflict', 'contradict', 'inconsisten', 'clash', 'incompatible',
-            'opposing decision', 'tension between', 'contradictory',
-        ]
-        return any(p in query_lower for p in conflict_patterns)
 
-    def _is_doc_drift_query(self, query_lower: str) -> bool:
-        doc_drift_patterns = [
-            'outdated doc', 'stale doc', 'doc drift', 'documentation drift',
-            'out of date doc', 'docs need', 'documentation need', 'docs outdated',
-            'documentation outdated', 'which docs', 'what docs', 'old docs',
-            'drift of', 'drift status',
-        ]
-        # Catch "are any docs/documentation outdated/stale/up to date/current"
-        if re.search(r'(doc|documentation|wiki|confluence).{0,20}(stale|outdated|old|update|current|up.to.date)', query_lower):
-            return True
-        if re.search(r'(stale|outdated|out.of.date).{0,20}(doc|documentation|wiki|confluence)', query_lower):
-            return True
-        if re.search(r'(are|is).{0,10}(doc|documentation).{0,20}(up.to.date|current|fresh)', query_lower):
-            return True
-        return any(p in query_lower for p in doc_drift_patterns)
+    def _llm_parse(self, query: str, prev_context: Optional[str]) -> Optional[ClassifiedIntent]:
+        """Single Groq call → structured intent + entities."""
+        try:
+            prompt = _build_parse_prompt(query, self._people_str, prev_context)
+            response = self._llm_client.chat.completions.create(
+                model='llama-3.1-8b-instant',
+                messages=[
+                    {'role': 'system', 'content': _PARSE_SYSTEM},
+                    {'role': 'user',   'content': prompt},
+                ],
+                temperature=0.1,
+                max_tokens=120,
+            )
+            raw = response.choices[0].message.content
+            parsed = _parse_llm_json(raw)
+            if not parsed or 'intent' not in parsed:
+                return None
 
-    def _is_provenance_query(self, query_lower: str) -> bool:
-        provenance_patterns = [
-            'where did', 'come from', 'origin of', 'history of', 'trace',
-            'led to', 'resulted in', 'what happened after', 'commits after',
-            'full history', 'how did we get', 'provenance', 'source of the decision',
-            'background of', 'background behind',
-        ]
-        return any(p in query_lower for p in provenance_patterns)
+            # Map intent string → IntentType
+            intent_str = parsed.get('intent', 'general_query')
+            try:
+                intent_type = IntentType(intent_str)
+            except ValueError:
+                intent_type = IntentType.GENERAL_QUERY
 
-    def _is_sprint_summary_query(self, query_lower: str, entities: List[str]) -> bool:
-        """Check if query is asking for a sprint summary."""
-        has_sprint_number = any(e.isdigit() for e in entities if isinstance(e, str))
+            entities = _build_entities(parsed, self._registry)
+            confidence = float(parsed.get('confidence', 0.85))
 
-        summary_keywords = [
-            'summary', 'summarize', 'overview', 'recap', 'highlights',
-            'accomplishments', 'report', 'insights', 'analysis',
-            'what happened in sprint', 'tell me about sprint'
-        ]
+            return ClassifiedIntent(
+                intent_type=intent_type,
+                confidence=min(max(confidence, 0.0), 1.0),
+                entities=entities,
+                original_query=query,
+            )
+        except Exception:
+            return None
 
-        has_sprint_word = 'sprint' in query_lower
-        has_summary_keyword = any(kw in query_lower for kw in summary_keywords)
+    # ── Kept for classify_with_explanation (Streamlit debug view) ────────────
 
-        sprint_summary_pattern = bool(re.search(
-            r'(summary|overview|recap|summarize).{0,20}sprint\s*\d+|sprint\s*\d+.{0,20}(summary|overview|recap)',
-            query_lower
-        ))
-
-        what_happened_pattern = bool(re.search(
-            r'what.{0,10}(happened|occurred|done|achieved).{0,10}sprint\s*\d+',
-            query_lower
-        ))
-
-        # "who are responsible in sprint 2", "who worked on sprint 1", "sprint 2 team"
-        who_sprint_pattern = bool(re.search(
-            r'(who|team|people|members?|responsible|contributors?).{0,25}sprint\s*\d+'
-            r'|sprint\s*\d+.{0,25}(who|team|responsible|members?)',
-            query_lower
-        ))
-
-        # "what is scheduled for sprint 3", "status on sprint 2"
-        status_sprint_pattern = bool(re.search(
-            r'(scheduled|planned|status|progress).{0,20}sprint\s*\d+'
-            r'|sprint\s*\d+.{0,20}(scheduled|planned|status|progress)',
-            query_lower
-        ))
-
-        return (
-            sprint_summary_pattern or
-            what_happened_pattern or
-            who_sprint_pattern or
-            status_sprint_pattern or
-            (has_sprint_word and has_summary_keyword and has_sprint_number)
-        )
-    
-    def _extract_entities(self, query: str) -> List[str]:
-        """Extract entities from the query."""
-        entities = []
-        query_lower = query.lower()
-        
-        # Extract ticket IDs
-        ticket_matches = re.findall(
-            self.entity_patterns['ticket_id'], 
-            query, 
-            re.IGNORECASE
-        )
-        entities.extend([t.upper() for t in ticket_matches])
-        
-        # Extract sprint numbers
-        sprint_matches = re.findall(
-            self.entity_patterns['sprint_number'],
-            query,
-            re.IGNORECASE
-        )
-        entities.extend(sprint_matches)
-        
-        # Extract person names: normalise each match to its canonical full name
-        if self._registry:
-            _seen = set()
-            for variant in self._person_names:
-                if variant in query_lower:
-                    canonical = self._registry.normalize_name(variant)
-                    if canonical and canonical.lower() not in _seen:
-                        entities.append(canonical)
-                        _seen.add(canonical.lower())
-        else:
-            for name in self._person_names:
-                if name in query_lower and name.title() not in entities:
-                    entities.append(name.title())
-        
-        # Extract tech terms
-        for term in self.tech_terms:
-            if term in query_lower:
-                entities.append(term)
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_entities = []
-        for e in entities:
-            e_lower = e.lower()
-            if e_lower not in seen:
-                seen.add(e_lower)
-                unique_entities.append(e)
-        
-        return unique_entities
-    
-    def _has_decision_keywords(self, query_lower: str) -> bool:
-        """Check if query has decision-related keywords."""
-        decision_keywords = ['why', 'decision', 'chose', 'rationale', 'reason']
-        return any(kw in query_lower for kw in decision_keywords)
-    
-    def _score_intents(self, query_lower: str) -> dict:
-        """Score each intent type based on keyword matches."""
-        scores = {}
-        
-        for intent_type, config in self.intent_configs.items():
-            if intent_type == IntentType.SPRINT_SUMMARY_QUERY:
-                continue
-                
-            score = 0
-            matched_keywords = []
-            
-            for keyword in config.keywords:
-                if keyword in query_lower:
-                    weight = len(keyword.split())
-                    
-                    # Boost for specific keywords
-                    if keyword in ['meeting', 'discussed', 'standup', 'planning']:
-                        weight *= 1.5
-                    
-                    score += weight
-                    matched_keywords.append(keyword)
-            
-            if len(matched_keywords) > 1:
-                score *= 1.2
-            
-            scores[intent_type] = score
-        
-        return scores
-    
-    def _get_best_intent(self, scores: dict) -> Tuple[IntentType, float]:
-        """Get the intent with highest score."""
-        if not scores or all(s == 0 for s in scores.values()):
-            return IntentType.GENERAL_QUERY, 0.0
-        
-        best_intent = max(scores, key=scores.get)
-        return best_intent, scores[best_intent]
-    
-    def _calculate_confidence(
-        self, 
-        score: float, 
-        entities: List[str], 
-        query_lower: str
-    ) -> float:
-        """Calculate confidence score."""
-        if score == 0:
-            return 0.3
-        
-        confidence = min(0.5 + (score * 0.1), 0.95)
-        
-        if entities:
-            confidence += 0.1
-        
-        question_words = ['what', 'why', 'how', 'who', 'when', 'where']
-        if any(qw in query_lower for qw in question_words):
-            confidence += 0.05
-        
-        return min(confidence, 0.95)
-    
-    def classify_with_explanation(self, query: str) -> Tuple[ClassifiedIntent, str]:
-        """Classify with detailed explanation."""
-        result = self.classify(query)
-        
-        query_lower = query.lower()
-        scores = self._score_intents(query_lower)
-        
+    def classify_with_explanation(self, query: str, prev_context: Optional[str] = None) -> Tuple[ClassifiedIntent, str]:
+        result = self.classify(query, prev_context)
+        used_llm = self._llm_available
         lines = [
             f"Query: {query}",
-            f"Entities: {result.entities}",
-            "",
-            "Scores:",
-        ]
-        
-        for intent, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
-            marker = "→" if intent == result.intent_type else " "
-            lines.append(f"  {marker} {intent.value}: {score:.2f}")
-        
-        lines.extend([
-            "",
-            f"Selected: {result.intent_type.value}",
+            f"Parser: {'LLM (llama-3.1-8b-instant)' if used_llm else 'keyword fallback'}",
+            f"Intent: {result.intent_type.value}",
             f"Confidence: {result.confidence:.2f}",
-        ])
-        
+            f"Entities: {result.entities}",
+        ]
         return result, "\n".join(lines)
 
 
+# ── Quick test ────────────────────────────────────────────────────────────────
+
 def test_classifier():
-    """Test the classifier."""
     classifier = IntentClassifier()
-    
-    test_queries = [
-        # Person queries (should all be person_query)
-        "What has Marcus been working on?",
-        "Who worked on the frontend?",
-        "Show me Lisa's commits",
-        "Who should I contact for backend questions?",
-        "What are Marcus's contributions?",
-        
-        # Decision queries
-        "Why did we choose React?",
-        "What was the rationale for PostgreSQL?",
-        
-        # Sprint queries
-        "What's the summary of Sprint 1?",
-        "Sprint 2 status",
-        
-        # List queries
-        "What Confluence pages are available?",
-        "List all decisions",
-        
-        # Ticket queries
-        "Tell me about ONBOARD-14",
+
+    queries = [
+        # These all failed with the old classifier
+        ("get me all commits by Marcus",           "person_query"),
+        ("get me all commits related to react",    "person_query"),
+        ("new employee first steps",               "howto_query"),
+        ("whom should I reach out for react doubts","person_query"),
+        ("what are all key decisions about frontend","decision_query"),
+        # Standard queries
+        ("Why did we choose React?",               "decision_query"),
+        ("What's the summary of Sprint 2?",        "sprint_summary_query"),
+        ("Are there any conflicting decisions?",   "conflict_query"),
+        ("Where did the JWT decision come from?",  "provenance_query"),
+        ("Which docs are outdated?",               "doc_drift_query"),
+        ("Tell me about ONBOARD-14",               "ticket_query"),
     ]
-    
-    print("=" * 60)
-    print("INTENT CLASSIFIER TEST v3")
-    print("=" * 60)
-    
-    for query in test_queries:
+
+    print("=" * 70)
+    print("INTENT CLASSIFIER TEST v4  (LLM parse)")
+    print("=" * 70)
+    for query, expected in queries:
         result = classifier.classify(query)
-        print(f"\nQuery: {query}")
-        print(f"  Intent: {result.intent_type.value}")
-        print(f"  Confidence: {result.confidence:.2f}")
-        print(f"  Entities: {result.entities}")
-    
-    print("\n" + "=" * 60)
+        ok = "✓" if result.intent_type.value == expected else "✗"
+        print(f"\n  {ok} {query}")
+        print(f"       intent={result.intent_type.value}  expected={expected}  conf={result.confidence:.2f}")
+        print(f"       entities={result.entities}")
+    print("\n" + "=" * 70)
 
 
 if __name__ == "__main__":
