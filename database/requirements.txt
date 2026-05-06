@@ -10,8 +10,6 @@ webvtt-py>=0.4.6
 # Useful utilities
 python-dateutil>=2.8.2
 
-# Add these to your requirements.txt
-
 # DSPy for LLM programming
 dspy-ai>=2.4.0
 
@@ -20,3 +18,7 @@ openai>=1.0.0
 
 # Alternative: Anthropic (for Claude models)
 # anthropic>=0.18.0
+
+# Semantic similarity for decision deduplication
+sentence-transformers>=2.2.0
+numpy>=1.24.0

@@ -38,6 +38,13 @@ from dataclasses import dataclass
 from typing import List, Optional, Any, Tuple
 from difflib import SequenceMatcher
 
+try:
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+
 # Add the parent directory to path for Django
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -307,27 +314,44 @@ class ChainOfThought:
 class DecisionDeduplicator:
     """
     Handles deduplication and supersession detection.
-    - Links duplicates via related_decisions field
-    - Detects superseded decisions (e.g., Material UI → Tailwind)
+    Uses semantic embeddings (sentence-transformers/all-MiniLM-L6-v2) for similarity.
+    Falls back to SequenceMatcher string similarity if package not installed.
     """
-    
+
+    EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+
     def __init__(self, similarity_threshold: float = 0.70):
         self.similarity_threshold = similarity_threshold
         self.existing_decisions = []  # List of (id, title, source_type, status) tuples
-    
-    def load_existing_decisions(self):
-        """Load existing decisions from database."""
-        self.existing_decisions = [
-            (str(d.id), d.title.lower().strip(), d.source_type, d.status)
-            for d in Decision.objects.all()
-        ]
-        print(f"  Loaded {len(self.existing_decisions)} existing decisions for dedup")
-    
+        self._model = None
+        self._embedding_cache = {}  # normalized_title -> np.ndarray
+
+    def _get_model(self):
+        if self._model is None:
+            if EMBEDDINGS_AVAILABLE:
+                print(f"  Loading embedding model ({self.EMBEDDING_MODEL})...")
+                self._model = SentenceTransformer(self.EMBEDDING_MODEL)
+                print("  Embedding model ready")
+            else:
+                print("  WARNING: sentence-transformers not installed. Falling back to string matching.")
+                print("  Run: pip install sentence-transformers")
+        return self._model
+
+    def _get_embedding(self, text: str):
+        """Embed text, caching to avoid recomputation."""
+        if text not in self._embedding_cache:
+            model = self._get_model()
+            if model is not None:
+                self._embedding_cache[text] = model.encode(text, normalize_embeddings=True)
+            else:
+                self._embedding_cache[text] = None
+        return self._embedding_cache[text]
+
     def normalize_title(self, title: str) -> str:
-        """Normalize title for comparison."""
+        """Strip action prefixes so 'use React' and 'adopt React' embed similarly."""
         title = title.lower().strip()
         prefixes = [
-            'use ', 'adopt ', 'implement ', 'choose ', 'select ', 
+            'use ', 'adopt ', 'implement ', 'choose ', 'select ',
             'switch to ', 'decided to ', 'decision to ', 'chose ',
             'switched to ', 'selected ', 'adopted ', 'switch from '
         ]
@@ -335,51 +359,69 @@ class DecisionDeduplicator:
             if title.startswith(prefix):
                 title = title[len(prefix):]
         return title
-    
+
     def calculate_similarity(self, title1: str, title2: str) -> float:
-        """Calculate similarity between two titles."""
+        """Cosine similarity on embeddings. Falls back to SequenceMatcher ratio."""
         t1 = self.normalize_title(title1)
         t2 = self.normalize_title(title2)
+
+        emb1 = self._get_embedding(t1)
+        emb2 = self._get_embedding(t2)
+
+        if emb1 is not None and emb2 is not None:
+            # Embeddings are L2-normalized, so dot product == cosine similarity
+            return float(np.dot(emb1, emb2))
+
         return SequenceMatcher(None, t1, t2).ratio()
-    
+
+    def load_existing_decisions(self):
+        """Load existing decisions and pre-warm embedding cache."""
+        self.existing_decisions = [
+            (str(d.id), d.title.lower().strip(), d.source_type, d.status)
+            for d in Decision.objects.all()
+        ]
+
+        if EMBEDDINGS_AVAILABLE and self.existing_decisions:
+            self._get_model()  # load once upfront
+            for _, title, _, _ in self.existing_decisions:
+                self._get_embedding(self.normalize_title(title))
+
+        print(f"  Loaded {len(self.existing_decisions)} existing decisions for dedup")
+
     def find_duplicates(self, new_title: str) -> List[str]:
-        """Find existing decisions similar to the new one."""
+        """Find existing decisions semantically similar to the new one."""
         duplicates = []
-        
-        for existing_id, existing_title, source_type, status in self.existing_decisions:
+        for existing_id, existing_title, *_ in self.existing_decisions:
             similarity = self.calculate_similarity(new_title, existing_title)
             if similarity >= self.similarity_threshold:
                 duplicates.append(existing_id)
-        
         return duplicates
-    
+
     def is_duplicate(self, new_title: str) -> Tuple[bool, List[str]]:
         """Check if a decision is a duplicate."""
         duplicates = self.find_duplicates(new_title)
         return (len(duplicates) > 0, duplicates)
-    
+
     def find_superseded_decision(self, supersedes_text: str) -> Optional[str]:
-        """
-        Find the decision that is being superseded.
-        E.g., if supersedes_text is "Use Material UI", find that decision's ID.
-        """
+        """Find the existing decision most semantically similar to supersedes_text."""
         if not supersedes_text or supersedes_text.lower() in ['null', 'none', 'n/a', '']:
             return None
-        
+
         best_match_id = None
         best_similarity = 0.0
-        
-        for existing_id, existing_title, source_type, status in self.existing_decisions:
+
+        for existing_id, existing_title, *_ in self.existing_decisions:
             similarity = self.calculate_similarity(supersedes_text, existing_title)
             if similarity > best_similarity and similarity >= 0.6:
                 best_similarity = similarity
                 best_match_id = existing_id
-        
+
         return best_match_id
-    
+
     def add_decision(self, decision_id: str, title: str, source_type: str, status: str = 'active'):
-        """Add a new decision to the tracking list."""
+        """Add a new decision to the tracking list and warm its embedding cache."""
         self.existing_decisions.append((decision_id, title.lower().strip(), source_type, status))
+        self._get_embedding(self.normalize_title(title.lower().strip()))
 
 
 # ============================================
