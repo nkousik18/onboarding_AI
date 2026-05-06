@@ -17,7 +17,7 @@ from .types import (
     ClassifiedIntent,
     INTENT_CONFIGS,
     ENTITY_PATTERNS,
-    TECH_TERMS
+    TECH_TERMS,
 )
 
 
@@ -89,6 +89,15 @@ class IntentClassifier:
         if self._is_provenance_query(query_lower):
             return ClassifiedIntent(
                 intent_type=IntentType.PROVENANCE_QUERY,
+                confidence=0.92,
+                entities=entities,
+                original_query=query
+            )
+
+        # Step 3d: Check for doc drift query
+        if self._is_doc_drift_query(query_lower):
+            return ClassifiedIntent(
+                intent_type=IntentType.DOC_DRIFT_QUERY,
                 confidence=0.92,
                 entities=entities,
                 original_query=query
@@ -195,6 +204,22 @@ class IntentClassifier:
             'opposing decision', 'tension between', 'contradictory',
         ]
         return any(p in query_lower for p in conflict_patterns)
+
+    def _is_doc_drift_query(self, query_lower: str) -> bool:
+        doc_drift_patterns = [
+            'outdated doc', 'stale doc', 'doc drift', 'documentation drift',
+            'out of date doc', 'docs need', 'documentation need', 'docs outdated',
+            'documentation outdated', 'which docs', 'what docs', 'old docs',
+            'drift of', 'drift status',
+        ]
+        # Catch "are any docs/documentation outdated/stale/up to date/current"
+        if re.search(r'(doc|documentation|wiki|confluence).{0,20}(stale|outdated|old|update|current|up.to.date)', query_lower):
+            return True
+        if re.search(r'(stale|outdated|out.of.date).{0,20}(doc|documentation|wiki|confluence)', query_lower):
+            return True
+        if re.search(r'(are|is).{0,10}(doc|documentation).{0,20}(up.to.date|current|fresh)', query_lower):
+            return True
+        return any(p in query_lower for p in doc_drift_patterns)
 
     def _is_provenance_query(self, query_lower: str) -> bool:
         provenance_patterns = [

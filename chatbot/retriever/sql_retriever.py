@@ -59,6 +59,7 @@ class SQLRetriever(BaseRetriever):
             'sprint_summary_query': self._retrieve_sprint_summary,
             'conflict_query': self._retrieve_conflicts,
             'provenance_query': self._retrieve_provenance,
+            'doc_drift_query': self._retrieve_doc_drift,
             'general_query': self._retrieve_general,
         }
         
@@ -1154,6 +1155,96 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
                 'has_conflicts': bool(conflict_lines),
             }
         )]
+
+    def _retrieve_doc_drift(self, query: str, entities: List[str], limit: int) -> List[Document]:
+        """Return Confluence pages with drift_risk populated, ordered high → medium → low → none."""
+        query_lower = query.lower()
+
+        # Determine filter: specific risk level requested, or all
+        risk_filter = None
+        if any(w in query_lower for w in ('high', 'very stale', 'most outdated', 'worst')):
+            risk_filter = 'high'
+        elif any(w in query_lower for w in ('medium',)):
+            risk_filter = 'medium'
+        elif any(w in query_lower for w in ('low', 'up to date', 'up-to-date', 'current')):
+            risk_filter = 'low'
+
+        risk_order = {'high': 0, 'medium': 1, 'low': 2, 'none': 3}
+
+        qs = ConfluencePage.objects.exclude(drift_risk=None)
+        if risk_filter:
+            qs = qs.filter(drift_risk=risk_filter)
+
+        pages = list(qs)
+        pages.sort(key=lambda p: risk_order.get(p.drift_risk or 'none', 4))
+
+        if not pages:
+            # drift check has never been run — tell the user
+            return [Document(
+                title="Confluence Drift Not Yet Computed",
+                content=(
+                    "The documentation drift check hasn't been run yet. "
+                    "Run `python scripts/check_confluence_drift.py` from the database/ directory "
+                    "to compute drift risk for all Confluence pages."
+                ),
+                source_type="system",
+                metadata={'error': True},
+            )]
+
+        documents = []
+        risk_emoji = {'high': 'HIGH', 'medium': 'MEDIUM', 'low': 'LOW', 'none': 'NONE'}
+
+        for page in pages[:limit]:
+            risk = page.drift_risk or 'none'
+            topics_str = ', '.join(page.confluence_topics or [])
+            doc_date = (
+                page.page_updated_date.strftime('%Y-%m-%d')
+                if page.page_updated_date else 'unknown'
+            )
+            activity_date = (
+                page.last_activity_date.strftime('%Y-%m-%d')
+                if page.last_activity_date else 'none'
+            )
+            gap_str = ''
+            if page.last_activity_date and page.page_updated_date:
+                from datetime import timezone as _tz
+                def _aw(d):
+                    return d.replace(tzinfo=_tz.utc) if d.tzinfo is None else d
+                gap = (_aw(page.last_activity_date) - _aw(page.page_updated_date)).days
+                gap_str = f' (gap: {gap} days)'
+
+            content = (
+                f"Drift risk: {risk_emoji.get(risk, risk.upper())}\n"
+                f"Documentation page: {page.title}\n"
+                f"Last doc update: {doc_date}\n"
+                f"Last code activity on these topics: {activity_date}{gap_str}\n"
+                f"Topics covered: {topics_str or 'unknown'}\n"
+            )
+            if risk == 'high':
+                content += (
+                    f"\nThis page is likely stale. Engineers are actively working on "
+                    f"'{topics_str}' (last commit/ticket: {activity_date}) but the "
+                    f"documentation was last updated {doc_date}."
+                )
+            elif risk == 'medium':
+                content += f"\nThis page may be slightly behind code changes."
+            elif risk == 'none':
+                content += "\nNo recent code activity found for these topics — page may cover stable or inactive features."
+
+            documents.append(Document(
+                title=f"[{risk.upper()}] {page.title}",
+                content=content,
+                source_type="confluence",
+                metadata={
+                    'drift_risk': risk,
+                    'page_updated': doc_date,
+                    'last_activity': activity_date,
+                    'topics': topics_str,
+                    'error': False,
+                },
+            ))
+
+        return documents
 
     def _retrieve_general(self, query: str, entities: List[str], limit: int) -> List[Document]:
         """General fallback."""

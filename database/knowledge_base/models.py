@@ -156,9 +156,16 @@ class ConfluencePage(models.Model):
     page_created_date = models.DateTimeField(blank=True, null=True)
     page_updated_date = models.DateTimeField(blank=True, null=True)
     source_filename = models.CharField(max_length=255, blank=True, null=True)
+    drift_risk = models.CharField(max_length=10, blank=True, null=True)
+    last_activity_date = models.DateTimeField(blank=True, null=True)
+    confluence_topics = ArrayField(
+        models.TextField(),
+        blank=True,
+        null=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'confluence_pages'
         managed = False

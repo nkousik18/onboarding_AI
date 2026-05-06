@@ -440,6 +440,7 @@ class OnboardingChatbot:
             'decision_query': f"I don't have specific information about decisions related to {entity_str} in my current data.",
             'conflict_query': "No conflicts have been detected between active decisions yet. Run check_conflicts.py to scan for them.",
             'provenance_query': f"I couldn't find a decision matching '{entity_str}'. Try using part of the decision title, e.g. 'trace the JWT decision' or 'where did Tailwind come from?'",
+            'doc_drift_query': "The documentation drift check hasn't been run yet. Run `python scripts/check_confluence_drift.py` from the database/ directory to analyse doc staleness.",
             
             'meeting_query': f"I don't have information about meetings related to {entity_str} in my current data.",
             
@@ -465,6 +466,7 @@ class OnboardingChatbot:
             'list_query': "List all items requested with key details.",
             'conflict_query': "List every detected conflict clearly. For each conflict state: which two decisions conflict, the severity (high/medium/low), the conflict type (direct/indirect/potential), and a plain-English explanation of why they conflict. Be direct and structured.",
             'provenance_query': "Narrate the full provenance chain: where the decision came from, which Jira tickets followed, which commits implemented it, and any known conflicts. Tell the story chronologically in plain English.",
+            'doc_drift_query': "Report which documentation pages are stale. For each page state its drift risk (HIGH/MEDIUM/LOW/NONE), when it was last updated, when the related code was last changed, and the gap in days. Highlight high-risk pages first and explain why they may be out of date.",
             'general_query': "Provide helpful information based on the context.",
         }
         

@@ -23,6 +23,7 @@ class IntentType(Enum):
     SPRINT_SUMMARY_QUERY = "sprint_summary_query"
     CONFLICT_QUERY = "conflict_query"
     PROVENANCE_QUERY = "provenance_query"
+    DOC_DRIFT_QUERY = "doc_drift_query"
     GENERAL_QUERY = "general_query"
 
 
@@ -206,6 +207,22 @@ INTENT_CONFIGS: Dict[IntentType, IntentConfig] = {
             "Show me the history behind the Tailwind CSS switch",
             "What commits followed the JWT decision?",
             "Trace the SQLAlchemy decision",
+        ]
+    ),
+
+    IntentType.DOC_DRIFT_QUERY: IntentConfig(
+        intent_type=IntentType.DOC_DRIFT_QUERY,
+        keywords=[
+            'outdated', 'stale', 'old docs', 'doc drift', 'documentation drift',
+            'out of date', 'needs update', 'documentation outdated',
+        ],
+        tables=['confluence_pages'],
+        description="Questions about which documentation pages are stale or out of date",
+        example_queries=[
+            "Which docs are outdated?",
+            "Are any documentation pages stale?",
+            "What documentation needs to be updated?",
+            "Show me the drift status of our docs",
         ]
     ),
 
