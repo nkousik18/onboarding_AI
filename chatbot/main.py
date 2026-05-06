@@ -26,29 +26,6 @@ except ImportError:
     from llm import BytezLLM
 
 
-# Role/Topic to Person mapping
-ROLE_PERSON_MAPPING = {
-    'frontend': ['Lisa Park'],
-    'front-end': ['Lisa Park'],
-    'ui': ['Lisa Park'],
-    'react': ['Lisa Park'],
-    'css': ['Lisa Park'],
-    'tailwind': ['Lisa Park'],
-    'backend': ['Marcus Thompson'],
-    'back-end': ['Marcus Thompson'],
-    'api': ['Marcus Thompson'],
-    'authentication': ['Marcus Thompson'],
-    'auth': ['Marcus Thompson'],
-    'jwt': ['Marcus Thompson'],
-    'database': ['Sarah Chen', 'Marcus Thompson'],
-    'db': ['Sarah Chen', 'Marcus Thompson'],
-    'schema': ['Sarah Chen'],
-    'devops': ['Dave Rossi'],
-    'ci/cd': ['Dave Rossi'],
-    'cicd': ['Dave Rossi'],
-    'pipeline': ['Dave Rossi'],
-    'deployment': ['Dave Rossi'],
-}
 
 
 @dataclass
@@ -268,33 +245,30 @@ class OnboardingChatbot:
             print(message)
     
     def _map_role_to_person(self, query: str, entities: List[str]) -> List[str]:
-        """Map role/topic mentions to person names."""
-        query_lower = query.lower()
-        additional_entities = []
-        
-        for role, persons in ROLE_PERSON_MAPPING.items():
-            if role in query_lower:
-                for person in persons:
-                    if person not in entities and person not in additional_entities:
-                        additional_entities.append(person)
-        
-        return additional_entities
-    
+        """Map role/topic mentions to canonical person names via registry."""
+        try:
+            from retriever.people import registry
+            matched = registry.find_by_role_keywords(query)
+            return [p for p in matched if p not in entities]
+        except Exception:
+            return []
+
     def _extract_entities_from_response(self, response: str) -> List[str]:
-        """Extract person names and key entities from response text."""
+        """Extract person names and ticket IDs from a response string."""
         entities = []
-        
-        # Known person names
-        person_names = ['Sarah Chen', 'Marcus Thompson', 'Lisa Park', 'Priya Sharma', 'James O\'Brien', 'Dave Rossi']
-        for name in person_names:
-            if name in response:
-                entities.append(name)
-        
-        # Ticket IDs
+
+        try:
+            from retriever.people import registry
+            for name in registry.get_all_names():
+                if name in response:
+                    entities.append(name)
+        except Exception:
+            pass
+
         import re
         tickets = re.findall(r'ONBOARD-\d+', response)
         entities.extend(tickets)
-        
+
         return entities
     
     def chat(self, query: str) -> ChatResponse:

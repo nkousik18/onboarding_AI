@@ -8,11 +8,13 @@ Fixes:
 """
 
 import re
+import sys
+import os
 from typing import List, Tuple, Optional
 
 from .types import (
-    IntentType, 
-    ClassifiedIntent, 
+    IntentType,
+    ClassifiedIntent,
     INTENT_CONFIGS,
     ENTITY_PATTERNS,
     TECH_TERMS
@@ -21,29 +23,33 @@ from .types import (
 
 class IntentClassifier:
     """Rule-based intent classifier with improved person detection."""
-    
-    # Known person names (first names and full names)
-    PERSON_NAMES = [
-        'sarah', 'sarah chen',
-        'marcus', 'marcus thompson',
-        'lisa', 'lisa park',
-        'priya', 'priya sharma',
-        'james', "james o'brien",
-        'dave', 'dave rossi',
-    ]
-    
-    # Role keywords that map to person queries
+
+    # Role keywords that trigger person-related query detection
     ROLE_KEYWORDS = [
         'frontend', 'front-end', 'ui', 'react',
         'backend', 'back-end', 'api', 'authentication', 'auth',
         'database', 'db', 'schema',
         'devops', 'ci/cd', 'deployment', 'pipeline',
     ]
-    
+
     def __init__(self):
         self.intent_configs = INTENT_CONFIGS
         self.entity_patterns = ENTITY_PATTERNS
         self.tech_terms = TECH_TERMS
+
+        # Load person name variants from DB registry (graceful fallback if unavailable)
+        try:
+            _chatbot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _chatbot_dir not in sys.path:
+                sys.path.insert(0, _chatbot_dir)
+            from retriever.people import registry
+            self._registry = registry
+            self._person_names = registry.name_variants_for_classifier()
+            self._first_names = registry.get_all_first_names()
+        except Exception:
+            self._registry = None
+            self._person_names = []
+            self._first_names = []
     
     def classify(self, query: str) -> ClassifiedIntent:
         """Classify a user query into an intent type."""
@@ -137,16 +143,17 @@ class IntentClassifier:
     def _is_person_query(self, query_lower: str, entities: List[str]) -> bool:
         """
         Check if query is asking about a person.
-        
+
         Improved to detect:
-        1. Direct person names
+        1. Direct person names (from registry)
         2. Role keywords (frontend, backend, etc.)
         3. "who" questions about roles
         """
-        # Check for person names in entities
+        # Check for person name variants (loaded from DB registry)
+        entities_lower = [e.lower() for e in entities]
         has_person = any(
-            name.lower() in query_lower or name.lower() in [e.lower() for e in entities]
-            for name in self.PERSON_NAMES
+            name in query_lower or name in entities_lower
+            for name in self._person_names
         )
         
         if has_person:
@@ -172,15 +179,13 @@ class IntentClassifier:
         if has_role_keyword and has_person_question:
             return True
         
-        # Check for possessive patterns with names
-        possessive_patterns = [
-            r"(marcus|sarah|lisa|priya|james|dave)('s|s')",
-            r"(his|her)\s+(commits|tickets|work|contributions)",
-        ]
-        
-        for pattern in possessive_patterns:
-            if re.search(pattern, query_lower):
+        # Check for possessive patterns with first names from registry
+        if self._first_names:
+            first_names_re = '|'.join(re.escape(n.lower()) for n in self._first_names if n)
+            if re.search(rf"({first_names_re})('s|s')", query_lower):
                 return True
+        if re.search(r"(his|her)\s+(commits|tickets|work|contributions)", query_lower):
+            return True
         
         return False
     
@@ -250,13 +255,18 @@ class IntentClassifier:
         )
         entities.extend(sprint_matches)
         
-        # Extract person names (IMPROVED - check for partial matches)
-        for name in self.PERSON_NAMES:
-            if name in query_lower:
-                # Prefer full name if available
-                if ' ' in name:
-                    entities.append(name.title())
-                elif name + ' ' not in query_lower:  # Don't add first name if full name is there
+        # Extract person names: normalise each match to its canonical full name
+        if self._registry:
+            _seen = set()
+            for variant in self._person_names:
+                if variant in query_lower:
+                    canonical = self._registry.normalize_name(variant)
+                    if canonical and canonical.lower() not in _seen:
+                        entities.append(canonical)
+                        _seen.add(canonical.lower())
+        else:
+            for name in self._person_names:
+                if name in query_lower and name.title() not in entities:
                     entities.append(name.title())
         
         # Extract tech terms

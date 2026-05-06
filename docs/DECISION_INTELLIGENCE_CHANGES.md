@@ -729,6 +729,221 @@ The `--decision` flag does a case-insensitive `icontains` lookup. If exactly one
 
 ---
 
+---
+
+## Change 6: DB-Backed PeopleRegistry — Removing All Hardcoded Person Data
+
+### What changed
+
+- `chatbot/retriever/people.py` (new) — `PeopleRegistry` singleton, loaded from `Employee` table
+- `chatbot/retriever/sql_retriever.py` — removed `KNOWN_PERSONS` dict, rewrote `_retrieve_person_info()`
+- `chatbot/intent/classifier.py` — removed `PERSON_NAMES` list, loads name variants from registry at startup
+- `chatbot/main.py` — removed `ROLE_PERSON_MAPPING` dict, replaced two hardcoded methods
+
+---
+
+### The problem it solves
+
+Four chatbot files contained hardcoded dictionaries mapping person names, roles, and topics to specific engineers. Adding a new team member required editing source code in multiple files. Asking "who worked on React?" returned whoever was hardcoded for `'react'` — not whoever actually committed React code.
+
+---
+
+### Before — Hardcoded dicts spread across four files
+
+```python
+# sql_retriever.py — KNOWN_PERSONS
+KNOWN_PERSONS = {
+    'sarah': 'Sarah Chen',
+    'marcus': 'Marcus Thompson',
+    'lisa': 'Lisa Park',
+    ...
+}
+
+# sql_retriever.py — topic_person_map (inside _retrieve_person_info)
+topic_person_map = {
+    'frontend': 'Lisa',
+    'react': 'Lisa',
+    'backend': 'Marcus',
+    'database': 'Sarah',
+    'devops': 'Dave',
+    ...
+}
+
+# main.py — ROLE_PERSON_MAPPING
+ROLE_PERSON_MAPPING = {
+    'react': ['Lisa Park'],
+    'tailwind': ['Lisa Park'],
+    'jwt': ['Marcus Thompson'],
+    'deployment': ['Dave Rossi'],
+    ...
+}
+
+# classifier.py — PERSON_NAMES (for entity extraction)
+PERSON_NAMES = [
+    'sarah', 'sarah chen',
+    'marcus', 'marcus thompson',
+    ...
+]
+```
+
+**Failure modes:**
+
+| Scenario | Before | After |
+|---|---|---|
+| New engineer joins | Must edit 4 files | Add one row to `Employee` table |
+| "Who worked on React?" | Returns whoever is hardcoded | Returns whoever has the most React commits/tickets |
+| Engineer changes role | Stale forever unless code is updated | Reflects `Employee.role` at next startup |
+| Query for unknown name | Silent miss | DB lookup with fallback to evidence attribution |
+
+---
+
+### After — Single source of truth: the `Employee` table
+
+#### `PeopleRegistry` (new class, `chatbot/retriever/people.py`)
+
+```python
+class PeopleRegistry:
+    def load(self):
+        """Reads Employee table once at startup. Builds name lookup index."""
+        for emp in Employee.objects.filter(is_active=True):
+            # Index all variants: full name, first, last, github handle
+            for variant in [emp.name, first, last, emp.github_username]:
+                self._name_index[variant.lower()] = emp.name
+
+    def normalize_name(self, text) -> Optional[str]:
+        """'marcus' or 'marcust' → 'Marcus Thompson' (DB lookup)."""
+        return self._name_index.get(text.strip().lower())
+
+    def find_by_role_keywords(self, text) -> list[str]:
+        """'who works on frontend?' → Employee.filter(role__icontains=...)."""
+        # Maps colloquial terms → searchable role/dept keywords
+        # No hardcoded person names — queries the DB
+
+    def get_topic_contributors(self, topic) -> list[tuple[str, int]]:
+        """Evidence-based: who actually worked on X, ranked by contribution count."""
+        # commits mentioning topic: weight 3
+        # tickets about topic:      weight 2
+        # decisions tagged topic:   weight 1
+        return Counter.most_common()
+
+    def get_person_work(self, name) -> dict:
+        """Commits + tickets + decisions for a person. Returns their DB role too."""
+
+registry = PeopleRegistry()  # loaded once at import
+```
+
+#### Retriever — `_retrieve_person_info()` rewritten
+
+```python
+# Before (hardcoded fallback)
+topic_person_map = {'frontend': 'Lisa', 'react': 'Lisa', ...}
+for topic, person_first in topic_person_map.items():
+    if topic in query_lower:
+        return self._retrieve_person_info(query, [person_first], limit)
+
+# After (DB-backed, evidence-ranked)
+matched_names = registry.find_by_role_keywords(query)
+if matched_names:
+    return self._retrieve_person_info(query, matched_names, limit)
+
+for word in query.lower().split():
+    if len(word) > 4:
+        contributors = registry.get_topic_contributors(word)
+        if contributors:
+            top_name = contributors[0][0]  # highest evidence score
+            return self._retrieve_person_info(query, [top_name], limit)
+```
+
+#### Classifier — entity extraction rewritten
+
+```python
+# Before: static list, fragile deduplication
+PERSON_NAMES = ['sarah', 'sarah chen', 'marcus', 'marcus thompson', ...]
+for name in self.PERSON_NAMES:
+    if name in query_lower:
+        if name + ' ' not in query_lower:  # bug: skipped 'marcus' when 'marcus been' present
+            entities.append(name.title())
+
+# After: registry variants, normalised to canonical name
+for variant in self._person_names:  # loaded from DB at __init__
+    if variant in query_lower:
+        canonical = self._registry.normalize_name(variant)
+        if canonical and canonical.lower() not in _seen:
+            entities.append(canonical)  # always 'Marcus Thompson', never 'Marcus'
+            _seen.add(canonical.lower())
+```
+
+---
+
+### Evidence-based attribution
+
+"Who worked on React?" no longer returns the person hardcoded for `react`. It queries the data:
+
+```
+Commits mentioning 'react': ×3 per author
+Jira tickets about 'react':  ×2 per assignee/reporter
+Decisions tagged 'react':    ×1 per decided_by entry
+→ Top scorer is the answer
+```
+
+This is the same Counter approach used throughout the codebase for provenance. The answer changes automatically as the team's work changes.
+
+---
+
+### Live results after integration
+
+```
+Bot loaded OK
+Person names from registry: 24 variants  (6 employees × 4 variants each)
+First names: ['Dave', 'James', 'Lisa', 'Marcus', 'Priya', 'Sarah']
+
+Query: "What has Marcus been working on?"
+  Intent: person_query | Entities: ['Marcus Thompson']   ← canonical, from DB
+
+Query: "Who worked on the frontend?"
+  Intent: person_query | Entities: ['frontend', 'Lisa Park']  ← role → DB lookup
+
+Query: "Show me Sarah's commits"
+  Intent: person_query | Entities: ['Sarah Chen']  ← possessive → canonical
+```
+
+---
+
+### Engineering decisions in the implementation
+
+**Singleton loaded once at startup**
+
+`registry = PeopleRegistry()` at module level means the Employee table is read once when the chatbot initializes, not on every query. Calling `registry.load()` refreshes it without restarting.
+
+**Graceful fallback in classifier**
+
+The registry import in `classifier.__init__` is wrapped in `try/except`. If the DB is unavailable at startup, `self._person_names` and `self._first_names` fall back to empty lists — the chatbot degrades gracefully rather than crashing.
+
+**Four name variants per employee**
+
+Each employee is indexed under: full name, first name, last name, and GitHub handle. A query mentioning `marcust` (github handle) resolves to `Marcus Thompson` the same way a query mentioning `Marcus` does.
+
+**No circular imports**
+
+`classifier.py` (in `chatbot/intent/`) lazily imports `registry` inside `__init__` using an explicit `sys.path` insertion rather than a relative import, avoiding import-order issues since the intent package is loaded before the retriever package.
+
+---
+
+### How to phrase this on stage
+
+**One-liner (15 seconds):**
+> "Every person query in the chatbot is now answered from the database, not from code. Adding a new engineer to the team requires one DB row — not a code change across four files. And when you ask 'who worked on React', the answer is based on commit and ticket evidence, not a hardcoded mapping that someone has to keep up to date."
+
+**If a technical judge asks how topic attribution works:**
+> "We run a weighted evidence counter across three tables — commits score three points, tickets two, decisions one. For 'who worked on React', we sum all commits mentioning react by author, all tickets mentioning react by assignee, and all decisions tagged react by decided_by. The highest scorer is the answer. It's the same evidence pattern we use for provenance and conflict detection."
+
+**If asked why four variants per employee:**
+> "People refer to colleagues in different ways — first name, full name, GitHub handle. The name index normalises all of them to the canonical full name at lookup time. 'Marcus', 'thompson', 'marcust' and 'Marcus Thompson' all resolve to the same Employee record. The classifier extracts whichever variant appears in the query and the retriever always sees the canonical form."
+
+---
+
+---
+
 ## All Changes Complete
 
 | # | Change | Status |
@@ -738,3 +953,4 @@ The `--decision` flag does a case-insensitive `icontains` lookup. If exactly one
 | 3 | Groq LLM backend migration | done |
 | 4 | LLM conflict detection across active decisions | done |
 | 5 | Provenance chain via `EntityReference` traversal | done |
+| 6 | DB-backed `PeopleRegistry` — zero hardcoded person/role data | done |

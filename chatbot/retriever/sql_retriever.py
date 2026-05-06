@@ -33,26 +33,11 @@ SprintTicket = models['SprintTicket']
 EntityReference = models['EntityReference']
 
 from .base import BaseRetriever, Document
+from .people import registry
 
 
 class SQLRetriever(BaseRetriever):
     """SQL Retriever with improved person and list queries."""
-    
-    # Known person names for better matching
-    KNOWN_PERSONS = {
-        'sarah': 'Sarah Chen',
-        'sarah chen': 'Sarah Chen',
-        'marcus': 'Marcus Thompson',
-        'marcus thompson': 'Marcus Thompson',
-        'lisa': 'Lisa Park',
-        'lisa park': 'Lisa Park',
-        'priya': 'Priya Sharma',
-        'priya sharma': 'Priya Sharma',
-        'james': "James O'Brien",
-        "james o'brien": "James O'Brien",
-        'dave': 'Dave Rossi',
-        'dave rossi': 'Dave Rossi',
-    }
     
     def retrieve(
         self, 
@@ -169,11 +154,8 @@ class SQLRetriever(BaseRetriever):
         return documents
     
     def _normalize_person_name(self, name: str) -> Optional[str]:
-        """Normalize person name to full name."""
-        if not name:
-            return None
-        name_lower = name.lower().strip()
-        return self.KNOWN_PERSONS.get(name_lower, name)
+        """Normalize person name to full canonical name via registry."""
+        return registry.normalize_name(name) or name
     
     def _extract_sprint_number(self, query: str, entities: List[str]) -> Optional[int]:
         """Extract sprint number from query or entities."""
@@ -215,119 +197,87 @@ class SQLRetriever(BaseRetriever):
     
     def _retrieve_person_info(self, query: str, entities: List[str], limit: int) -> List[Document]:
         """
-        Retrieve information about people.
-        
-        Improved to:
-        1. Better name matching
-        2. Search by role/topic if no name found
-        3. Aggregate commits, tickets, and decisions
+        Retrieve information about people via PeopleRegistry (no hardcoded names/roles).
+        Resolution order:
+          1. Normalize entity strings to canonical names via registry
+          2. Scan query words for name variants
+          3. Fallback: find_by_role_keywords → evidence-based topic attribution
         """
         documents = []
-        query_lower = query.lower()
-        
-        # Find person names in entities
+
+        # 1. Resolve entities to canonical names
         person_names = []
         for entity in entities:
             if isinstance(entity, str):
-                normalized = self._normalize_person_name(entity)
-                if normalized and normalized not in person_names:
-                    person_names.append(normalized)
-        
-        # Also check query directly for person names
-        for short_name, full_name in self.KNOWN_PERSONS.items():
-            if short_name in query_lower and full_name not in person_names:
-                person_names.append(full_name)
-        
+                canonical = registry.normalize_name(entity)
+                if canonical and canonical not in person_names:
+                    person_names.append(canonical)
+
+        # 2. Scan individual query words for name variants
+        for word in query.lower().split():
+            canonical = registry.normalize_name(word)
+            if canonical and canonical not in person_names:
+                person_names.append(canonical)
+
         self._log(f"Person names found: {person_names}")
-        
+
         if person_names:
             for name in person_names:
-                # Get their commits
-                commits = GitCommit.objects.filter(
-                    author_name__icontains=name.split()[0]  # Search by first name
-                ).order_by('-commit_date')[:5]
-                
-                for commit in commits:
+                work = registry.get_person_work(name)
+
+                for commit in work['commits']:
                     documents.append(self._commit_to_document(commit))
-                
-                # Get their tickets (assigned or reported)
-                name_parts = name.split()
-                first_name = name_parts[0] if name_parts else name
-                
-                tickets = JiraTicket.objects.filter(
-                    Q(assignee__icontains=first_name) | Q(reporter__icontains=first_name)
-                ).order_by('-updated_date')[:5]
-                
-                for ticket in tickets:
+                for ticket in work['tickets']:
                     documents.append(self._ticket_to_document(ticket))
-                
-                # Get decisions they were involved in
-                decisions = Decision.objects.filter(
-                    Q(decided_by__icontains=first_name)
-                ).order_by('-decision_date')[:3]
-                
-                for decision in decisions:
+                for decision in work['decisions']:
                     documents.append(self._decision_to_document(decision))
-                
-                # Create a person summary document if we found data
+
                 if documents:
-                    summary = self._create_person_summary(name, documents)
+                    summary = self._create_person_summary(name, work['role'], documents)
                     documents.insert(0, summary)
-        
-        # If no specific person but topic mentioned (e.g., "frontend", "backend")
-        if not documents:
-            topic_person_map = {
-                'frontend': 'Lisa',
-                'front-end': 'Lisa',
-                'ui': 'Lisa',
-                'react': 'Lisa',
-                'backend': 'Marcus',
-                'back-end': 'Marcus',
-                'api': 'Marcus',
-                'auth': 'Marcus',
-                'database': 'Sarah',
-                'schema': 'Sarah',
-                'devops': 'Dave',
-                'ci/cd': 'Dave',
-            }
-            
-            for topic, person_first in topic_person_map.items():
-                if topic in query_lower:
-                    # Recursively call with the person name
-                    return self._retrieve_person_info(query, [person_first], limit)
-        
-        return documents[:limit]
-    
-    def _create_person_summary(self, name: str, documents: List[Document]) -> Document:
+
+            return documents[:limit]
+
+        # 3. No explicit name — try role keywords, then evidence-based topic attribution
+        matched_names = registry.find_by_role_keywords(query)
+        if matched_names:
+            return self._retrieve_person_info(query, matched_names, limit)
+
+        for word in query.lower().split():
+            if len(word) > 4:
+                contributors = registry.get_topic_contributors(word)
+                if contributors:
+                    top_name = contributors[0][0]
+                    return self._retrieve_person_info(query, [top_name], limit)
+
+        return []
+
+    def _create_person_summary(self, name: str, role: str, documents: List[Document]) -> Document:
         """Create a summary document for a person."""
         commits = [d for d in documents if d.source_type == 'commit']
         tickets = [d for d in documents if d.source_type == 'jira']
         decisions = [d for d in documents if d.source_type == 'decision']
-        
-        content = f"""SUMMARY FOR {name.upper()}
 
-Commits: {len(commits)}
-Tickets: {len(tickets)}
-Decisions involved: {len(decisions)}
+        content = f"SUMMARY FOR {name.upper()} — {role}\n\n"
+        content += f"Commits: {len(commits)}\nTickets: {len(tickets)}\nDecisions involved: {len(decisions)}\n\n"
 
-"""
         if commits:
             content += "Recent Commits:\n"
             for c in commits[:3]:
                 content += f"  - {c.title}\n"
             content += "\n"
-        
+
         if tickets:
             content += "Assigned Tickets:\n"
             for t in tickets[:3]:
                 content += f"  - {t.title}\n"
             content += "\n"
-        
+
         if decisions:
             content += "Decisions Involved:\n"
             for d in decisions[:3]:
                 content += f"  - {d.title}\n"
-        
+
         return Document(
             content=content,
             title=f"{name} - Work Summary",
@@ -340,6 +290,7 @@ Decisions involved: {len(decisions)}
             relevance_score=1.0,
             metadata={
                 'person_name': name,
+                'role': role,
                 'commit_count': len(commits),
                 'ticket_count': len(tickets),
                 'decision_count': len(decisions),
