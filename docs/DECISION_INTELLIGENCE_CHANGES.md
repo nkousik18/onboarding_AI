@@ -554,8 +554,187 @@ The LLM occasionally wraps JSON in ` ```json ``` ` fences. The parser strips fen
 
 ---
 
-## Upcoming Changes (this branch)
+## Change 5: Provenance Chain via EntityReference Traversal
+
+### What changed
+
+- `database/scripts/provenance.py` (new) — full chain traversal for any decision
+
+---
+
+### The problem it solves
+
+Storing a decision answers *what* was decided. Provenance answers *why*, *when*, *by whom*, and *what happened next*. Without it, a new engineer reading "Use JWT for authentication" has no way to know which meeting introduced it, which tickets were created as a result, or which commits implemented it. The decision is a dead end. Provenance turns it into a navigable chain.
+
+---
+
+### What the chain contains
+
+```
+Decision
+├── WHY          rationale extracted by the LLM
+├── ORIGIN       the source that introduced the decision
+│     meeting    → title, date, participants
+│     confluence → title, date, author, labels
+│     jira       → ticket key, summary, assignee
+├── TICKETS      Jira tickets linked to the origin source
+│     └─ via EntityReference (source → jira_ticket)
+│     └─ via Decision.related_tickets array
+├── COMMITS      Git commits that followed the decision
+│     └─ via EntityReference (commit → jira_ticket) for each ticket
+│     └─ via GitCommit.message keyword scan on Decision.tags
+├── CONFLICTS    from the decision_conflicts table (Change 4)
+└── SUPERSEDED BY  follows the superseded_by FK if present
+```
+
+---
+
+### How the traversal works
+
+#### Origin lookup
+
+```python
+def _load_origin(source_type: str, source_id) -> dict:
+    if source_type == 'meeting':
+        m = Meeting.objects.filter(id=source_id).first()
+        return {'title': m.title, 'participants': [...], 'date': ...}
+    if source_type == 'confluence':
+        cp = ConfluencePage.objects.filter(id=source_id).first()
+        return {'title': cp.title, 'author': cp.author, 'labels': ...}
+    if source_type == 'jira':
+        jt = JiraTicket.objects.filter(id=source_id).first()
+        return {'key': jt.issue_key, 'summary': jt.summary, ...}
+```
+
+Every decision records its `source_type` and `source_id` at extraction time, so the origin object is always one query away.
+
+#### Ticket discovery — two paths
+
+```python
+# Path 1: EntityReference table
+#   Populated at ingest time from meeting transcripts and Confluence pages
+refs = EntityReference.objects.filter(
+    source_type=decision.source_type,
+    source_id=decision.source_id,
+    reference_type='jira_ticket',
+)
+
+# Path 2: Decision.related_tickets array
+#   Set by the LLM during extraction
+ticket_keys = list(set(ref_keys + (decision.related_tickets or [])))
+```
+
+These two paths complement each other: EntityReference captures what the source document mentioned; `related_tickets` captures what the LLM inferred from context.
+
+#### Commit discovery — two paths
+
+```python
+# Path 1: EntityReference (commit → jira_ticket)
+#   Each commit that referenced a ticket key during ingest
+for key in ticket_keys:
+    for ref in EntityReference.objects.filter(
+        source_type='commit', reference_type='jira_ticket', reference_id=key
+    ):
+        gc = GitCommit.objects.filter(id=ref.source_id).first()
+
+# Path 2: Tag keyword scan on commits after the decision date
+#   Catches commits that mention the technology without a ticket ref
+for tag in decision.tags:
+    GitCommit.objects.filter(
+        message__icontains=tag,
+        commit_date__date__gte=decision.decision_date
+    )
+```
+
+Path 1 is precise — a commit explicitly named the ticket. Path 2 is broader — catches implementation commits that didn't reference a ticket but clearly relate to the technology.
+
+---
+
+### Live result: JWT authentication decision
+
+```
+════════════════════════════════════════════════════════════════
+  Use JWT for authentication
+  security  ·  confidence: 0.9  ·  tags: authentication, security
+════════════════════════════════════════════════════════════════
+
+  WHY
+  JWT is stateless, works better for API-based architecture,
+  and is easier to scale
+
+  ORIGIN  (meeting)
+  ├─ Sprint1 Meeting1 Planning
+  ├─ participants: Lisa Park, Marcus Thompson, Sarah Chen
+
+  TICKETS  (10)
+  ├─ ONBOARD-14  [Done]  Implement JWT authentication endpoints  → Marcus Thompson
+  ├─ ONBOARD-18  [Done]  Write unit tests for authentication module  → Marcus Thompson
+  ├─ ONBOARD-15  [Done]  Create login page UI component  → Lisa Park
+  ├─ ONBOARD-11  [Done]  Initialize Django project structure  → Marcus Thompson
+  └─ ... 6 more
+
+  COMMITS  (17)
+  ├─ [2026-01-09]  a8b9c0d1  feat: add user model with role field  (Marcus Thompson)
+  ├─ [2026-01-09]  f7a8b9c0  feat: implement JWT authentication endpoints  (Marcus Thompson)
+  ├─ [2026-01-10]  b9c0d1e2  feat: create login page component  (Lisa Park)
+  └─ ... 14 more
+
+  CONFLICTS  (0)
+  └─ none detected
+```
+
+One decision. One meeting. Ten tickets. Seventeen commits. The full arc from discussion to code, in a single query.
+
+---
+
+### Engineering decisions in the implementation
+
+**Two-path commit discovery instead of one**
+
+A commit that implements JWT auth might reference `ONBOARD-14` explicitly, or it might just mention "authentication" in the message without a ticket link. Using only EntityReference misses the second class. Using only tag search misses precise ticket linkage. Both paths run and results are merged on SHA.
+
+**No new tables**
+
+Everything is derived from data already in the DB: `entity_references`, `git_commits`, `decisions`, `decision_conflicts`. The script is pure read — it adds zero schema changes.
+
+**Deduplication by SHA**
+
+Both commit-discovery paths can return the same commit. Results are deduplicated by SHA before display. Ticket-linked entries take precedence over tag-linked ones since they carry more specific context.
+
+**Partial title matching**
+
+The `--decision` flag does a case-insensitive `icontains` lookup. If exactly one decision matches, it runs. If multiple match, they're listed with their UUIDs so the user can re-run with `--id`.
+
+**JSON output for programmatic use**
+
+`--json` emits the full chain as structured JSON. This is the hook for the chatbot retriever — `provenance.get_provenance_chain(decision)` returns the same dict and the chatbot can narrate it in plain English.
+
+---
+
+### How to phrase this on stage
+
+**One-liner (15 seconds):**
+> "For any decision in LIGHTHOUSE, you can ask: where did this come from, and what did the team build as a result? We trace the full chain — the meeting it was made in, every Jira ticket that followed, every commit that implemented it — using the reference graph we built at ingest time. That's institutional memory with receipts."
+
+**If a technical judge asks how you traverse the graph:**
+> "Every data source — meetings, Confluence pages, Jira tickets, commits — is connected through an `EntityReference` table populated at ingest time. A meeting that mentioned ONBOARD-14 creates a reference. A commit that closed ONBOARD-14 creates another. To trace a decision's impact, we follow that reference graph: decision → source → tickets → commits. No vector search, no LLM — pure relational traversal."
+
+**If asked why not use a graph database:**
+> "We considered it. The reference graph is sparse enough that PostgreSQL handles it with two or three joins. A graph DB would give us richer traversal on deeper chains, but it adds another infrastructure dependency with no payoff at this scale. If the graph grows — more sources, more cross-references — Neo4j or Dgraph would be the natural next step."
+
+**The non-technical hook:**
+> "A new engineer joins the team on Monday. By Thursday they're asking: why are we using JWT instead of sessions? Who made that call? What did we build because of it? Today they'd spend half a day reading meeting notes and Slack threads. With LIGHTHOUSE they type the question and get the full story: the meeting, the people in the room, the tickets, the code. Onboarding in minutes, not days."
+
+---
+
+---
+
+## All Changes Complete
 
 | # | Change | Status |
 |---|---|---|
-| 5 | Provenance chain via `EntityReference` traversal | planned |
+| 1 | Semantic deduplication via MiniLM embeddings | done |
+| 2 | Decision drift detection (`drift_risk`, `last_reinforced_at`) | done |
+| 3 | Groq LLM backend migration | done |
+| 4 | LLM conflict detection across active decisions | done |
+| 5 | Provenance chain via `EntityReference` traversal | done |
