@@ -19,7 +19,7 @@ if CHATBOT_DIR not in sys.path:
 
 from django_setup import get_models
 from typing import List, Optional
-from django.db.models import Q, Count
+from django.db.models import Q, Count, F
 
 models = get_models()
 Decision = models['Decision']
@@ -63,9 +63,11 @@ class SQLRetriever(BaseRetriever):
             'general_query': self._retrieve_general,
         }
         
-        # Check for "list all" type queries
-        if self._is_list_query(query):
-            return self._retrieve_list(query, entities, limit)
+        # Check for "list all" type queries — but don't intercept superseded/filtered decision queries
+        ql_check = query.lower()
+        _superseded_words = ('superseded', 'supersede', 'overridden', 'override', 'replaced', 'deprecated')
+        if self._is_list_query(query) and not any(w in ql_check for w in _superseded_words):
+            return self._retrieve_list(query, entities, max(limit, 15))
         
         method = retrieval_methods.get(intent_type, self._retrieve_general)
         return method(query, entities, limit)
@@ -254,12 +256,23 @@ class SQLRetriever(BaseRetriever):
             return documents[:limit]
 
         # 3. No explicit name — try role keywords, then evidence-based topic attribution
+
+        # Role-based lookup (maps 'aws', 'frontend', 'devops' etc. to employee roles)
         matched_names = registry.find_by_role_keywords(query)
         if matched_names:
             return self._retrieve_person_info(query, matched_names, limit)
 
+        # Evidence-based topic attribution — only on tech-relevant words, not generic verbs/nouns
+        _PERSON_QUERY_STOPWORDS = {
+            'who', 'what', 'where', 'when', 'why', 'how', 'did', 'does', 'has',
+            'have', 'been', 'made', 'make', 'worked', 'works', 'working',
+            'contact', 'reach', 'ask', 'tell', 'show', 'give', 'get', 'find',
+            'responsible', 'responsible', 'section', 'project', 'team', 'member',
+            'commits', 'commit', 'tickets', 'ticket', 'about', 'related', 'with',
+            'their', 'that', 'this', 'from', 'into', 'should', 'would', 'could',
+        }
         for word in query.lower().split():
-            if len(word) > 4:
+            if len(word) > 2 and word not in _PERSON_QUERY_STOPWORDS:
                 contributors = registry.get_topic_contributors(word)
                 if contributors:
                     top_name = contributors[0][0]
@@ -630,8 +643,15 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
         When no specific entity is mentioned (e.g. 'what are the key decisions?'),
         order by decision_date ascending so foundational Sprint-1 decisions surface
         first rather than the most recently extracted records.
+        Superseded queries filter on status='superseded' instead of 'active'.
         """
         documents = []
+
+        # Superseded/overridden decision queries need a different status filter
+        ql = query.lower()
+        wants_superseded = any(w in ql for w in ('superseded', 'supersede', 'overridden', 'override', 'replaced', 'deprecated'))
+        status_filter = 'superseded' if wants_superseded else 'active'
+
         q_filter = Q()
 
         for entity in entities:
@@ -647,8 +667,11 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
             'what', 'are', 'were', 'key', 'the', 'all', 'list', 'show', 'give',
             'tell', 'taken', 'made', 'main', 'decision', 'decisions', 'about',
             'have', 'been', 'that', 'this', 'some', 'any', 'our', 'your',
+            # status-related words — these describe the query intent, not the decision content
+            'superseded', 'supersede', 'overridden', 'override', 'replaced',
+            'deprecated', 'active', 'inactive',
         }
-        if not entities:
+        if not entities and not wants_superseded:
             topic_words = [
                 w for w in query.lower().split()
                 if len(w) > 3 and w not in _DECISION_STOPWORDS
@@ -659,7 +682,7 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
 
         # Unfiltered "list all" query — ascending date surfaces original decisions first
         order = 'decision_date' if not has_specific_filter else '-decision_date'
-        decisions = Decision.objects.filter(status='active').filter(q_filter).order_by(order)
+        decisions = Decision.objects.filter(status=status_filter).filter(q_filter).order_by(order)
 
         # Deduplicate by normalised title to avoid showing 3 copies of "Use JWT"
         seen_titles: set = set()
@@ -711,33 +734,58 @@ PROGRESS: {done}/{total} ({completion_pct:.0f}%)
     # =========================================
     
     def _retrieve_documentation(self, query: str, entities: List[str], limit: int) -> List[Document]:
-        """Retrieve Confluence documentation."""
-        documents = []
-        
-        q_filter = Q()
-        
-        for entity in entities:
-            if isinstance(entity, str):
-                q_filter |= Q(title__icontains=entity)
-                q_filter |= Q(content__icontains=entity)
-        
-        keywords = ['setup', 'install', 'configure', 'guide', 'start', 'api', 'architecture']
-        for keyword in keywords:
-            if keyword in query.lower():
-                q_filter |= Q(title__icontains=keyword)
-                q_filter |= Q(content__icontains=keyword)
-        
-        pages = ConfluencePage.objects.filter(q_filter)[:limit]
-        
-        for page in pages:
-            documents.append(self._confluence_to_document(page))
-        
-        if not documents:
-            pages = ConfluencePage.objects.all()[:limit]
-            for page in pages:
-                documents.append(self._confluence_to_document(page))
-        
-        return documents
+        """Retrieve Confluence documentation.
+
+        Ranking priority:
+          1. Pages whose title matches the most query words (title match = highest confidence)
+          2. Pages whose content matches query words
+        This ensures "new employee first steps" returns the page named that,
+        and "api documentation" returns the API Documentation page, not STAGE_0_DATA_MANIFEST.
+        """
+        _DOC_STOPWORDS = {
+            'what', 'are', 'the', 'of', 'in', 'is', 'can', 'how', 'do', 'me',
+            'give', 'show', 'tell', 'please', 'about', 'a', 'an', 'for', 'and',
+            'main', 'details', 'summarise', 'summarize', 'summary', 'confluence',
+        }
+
+        # Extract meaningful query words
+        query_words = [
+            w for w in re.sub(r'[^\w\s]', ' ', query.lower()).split()
+            if len(w) > 2 and w not in _DOC_STOPWORDS
+        ]
+
+        # Also include entity strings
+        extra_terms = [str(e).lower() for e in entities if isinstance(e, str)]
+        all_terms = list(dict.fromkeys(query_words + extra_terms))  # dedup, order preserved
+
+        if not all_terms:
+            pages = ConfluencePage.objects.all().order_by(
+                F('page_updated_date').desc(nulls_last=True)
+            )[:limit]
+            return [self._confluence_to_document(p) for p in pages]
+
+        # Fetch all pages that match any term in title or content
+        content_filter = Q()
+        title_filter = Q()
+        for term in all_terms:
+            title_filter |= Q(title__icontains=term)
+            content_filter |= Q(content__icontains=term)
+
+        all_pages = list(ConfluencePage.objects.filter(title_filter | content_filter))
+
+        # Score: +2 per term in title, +1 per term in content. Sort descending.
+        def _score(page):
+            t = page.title.lower()
+            c = (page.content or '').lower()
+            return sum(2 for w in all_terms if w in t) + sum(1 for w in all_terms if w in c)
+
+        all_pages.sort(key=_score, reverse=True)
+
+        if not all_pages:
+            # Absolute fallback
+            all_pages = list(ConfluencePage.objects.all()[:limit])
+
+        return [self._confluence_to_document(p) for p in all_pages[:limit]]
     
     def _confluence_to_document(self, page: ConfluencePage) -> Document:
         """Convert ConfluencePage to Document."""

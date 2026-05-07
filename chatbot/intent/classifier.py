@@ -24,7 +24,7 @@ from .types import (
 # ── LLM parse helpers ────────────────────────────────────────────────────────
 
 _INTENT_DESCRIPTIONS = [
-    ('decision_query',       'why a tech/architecture decision was made — "why React?", "rationale for JWT", "why Postgres?"'),
+    ('decision_query',       'why a tech/architecture decision was made, or asking about superseded/overridden decisions — "why React?", "rationale for JWT", "what decisions were superseded?", "which decisions were overridden?"'),
     ('person_query',         'what a person worked on, who worked on a topic, or who to contact — "Marcus\'s commits", "who did frontend?", "all commits by Marcus", "whom should I reach out for react help?"'),
     ('sprint_summary_query', 'sprint overview, team, or status — "sprint 2 summary", "who was in sprint 1", "what happened in sprint 3"'),
     ('timeline_query',       'when things happened, chronological history — "when was X decided?", "project timeline"'),
