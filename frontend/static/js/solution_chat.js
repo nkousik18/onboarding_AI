@@ -523,7 +523,7 @@ function renderHistoryList() {
       hideThinking();
       addMessage('bot',
         `<p>Sorry, I ran into an error: <code>${escHtml(err.message)}</code></p>` +
-        `<p>Make sure the backend is running and <code>BYTEZ_API_KEY</code> is set in your <code>.env</code>.</p>`
+        `<p>Make sure the backend is running and set <code>GROQ_API_KEY</code> (or <code>BYTEZ_API_KEY</code>) in your <code>.env</code>.</p>`
       );
     }
   }
@@ -540,16 +540,24 @@ function renderHistoryList() {
 
   function renderResults(results) {
     if (!results || !results.length) return '';
-    return `<div class="msg-results"><div class="msg-results-label">Sources</div>${results.map(r => `
-      <div class="msg-result-card">
-        <span class="msg-result-icon">${r.icon || '📎'}</span>
-        <div class="msg-result-body">
-          <div class="msg-result-card-type">${escHtml(r.type)}</div>
-          <div class="msg-result-card-title">${escHtml(r.title)}</div>
-          <div class="msg-result-card-meta">${escHtml(r.meta)}</div>
-        </div>
+    return `<div class="msg-citations">
+      <button class="citation-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+        <span class="citation-toggle-label">Sources</span>
+        <span class="citation-toggle-icon">▼</span>
+      </button>
+      <div class="citations-list">
+        ${results.map((r, i) => `
+          <a href="#" class="citation-item" data-index="${i}" onclick="event.preventDefault(); document.querySelectorAll('[data-citation-ref=\\'${i}\\']').forEach(el => el.scrollIntoView({behavior: 'smooth', block: 'center'}));">
+            <span class="citation-num">${i + 1}</span>
+            <span class="citation-icon">${r.icon || '📎'}</span>
+            <div class="citation-content">
+              <div class="citation-type">${escHtml(r.type)}</div>
+              <div class="citation-title">${escHtml(r.title)}</div>
+            </div>
+          </a>
+        `).join('')}
       </div>
-    `).join('')}</div>`;
+    </div>`;
   }
 
   // ── Utilities ─────────────────────────────────────────────

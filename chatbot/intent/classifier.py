@@ -168,7 +168,7 @@ def _keyword_classify(query: str, person_names: List[str], first_names: List[str
 
     # Keyword scoring (condensed)
     _kw = {
-        IntentType.DECISION_QUERY:  ['why', 'decision', 'chose', 'rationale', 'reason', 'switch'],
+        IntentType.DECISION_QUERY:  ['why', 'decision', 'chose', 'chose', 'rationale', 'reason', 'switch', 'key', 'are the', 'what are'],
         IntentType.HOWTO_QUERY:     ['how', 'setup', 'install', 'guide', 'steps', 'first steps'],
         IntentType.STATUS_QUERY:    ['status', 'progress', 'done', 'open', 'blocked', 'complete'],
         IntentType.MEETING_QUERY:   ['meeting', 'standup', 'discussed', 'planning', 'retro'],
@@ -247,11 +247,20 @@ class IntentClassifier:
         self._llm_available = False
         try:
             from dotenv import load_dotenv
+            import os
+            # Load environment variables from both main .env and database/.env
+            _main_env = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                '.env'
+            )
             _db_env = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 '..', 'database', '.env'
             )
+            # Load from both locations (main .env takes precedence)
             load_dotenv(os.path.normpath(_db_env))
+            load_dotenv(os.path.normpath(_main_env))
+            
             from openai import OpenAI
             key = os.getenv('GROQ_API_KEY')
             if key:
@@ -260,7 +269,7 @@ class IntentClassifier:
                     base_url='https://api.groq.com/openai/v1',
                 )
                 self._llm_available = True
-        except Exception:
+        except Exception as e:
             pass
 
     def classify(self, query: str, prev_context: Optional[str] = None) -> ClassifiedIntent:

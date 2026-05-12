@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Home — LightHouse</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/project_dashboard.css">
+  <style>
+    body { margin: 0; padding: 20px; background: #040a18; color: #e0ecf8; font-family: 'Source Sans 3', sans-serif; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-family: 'Rajdhani', sans-serif; color: #1e8fff; }
+    .placeholder { background: rgba(30,143,255,0.1); border: 1px solid rgba(30,143,255,0.3); border-radius: 8px; padding: 2rem; text-align: center; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Welcome to LightHouse</h1>
+    <p>This is the home page. Navigate to <a href="project_overview">/project_overview</a> to view your projects.</p>
+    <div class="placeholder">
+      <h2>Home Page</h2>
+      <p>This page is currently under development. Redirecting to <a href="project_dashboard.html">project dashboard</a>...</p>
+    </div>
+  </div>
+  <script>
+    // Redirect to dashboard after 2 seconds or navigate directly
+    if (!sessionStorage.getItem('isLoggedIn')) {
+      window.location.href = 'login.html';
+    } else {
+      setTimeout(() => {
+        window.location.href = 'project_dashboard.html';
+      }, 2000);
+    }
+  </script>
+</body>
+</html>

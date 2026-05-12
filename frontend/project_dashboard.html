@@ -14,11 +14,29 @@
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-top-row">
     <button class="sidebar-hamburger" id="sidebarToggle" title="Toggle sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-    <div class="sidebar-logo"><div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M10.5 5a1.5 1.5 0 0 1 3 0"/><path d="M10 5h4v3h-4z"/><path d="M10 8L8 19h8l-2-11z"/><line x1="10" y1="11" x2="14" y2="13"/><line x1="9.3" y1="15" x2="14.7" y2="17"/><path d="M6 19h12v2H6z"/><line x1="14" y1="5.5" x2="20" y2="2.5"/><line x1="14.5" y1="7" x2="21" y2="5"/><path d="M21 1.5v2M20 2.5h2"/></svg></div><div class="logo-text">Light<span>House</span></div></div>
+    <div class="sidebar-logo"><div class="logo-text">Light<span>House</span></div><div class="logo-icon"><svg viewBox="0 0 24 24" class="tower-svg"><defs><linearGradient id="towerGradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" /><stop offset="100%" style="stop-color:#FFA500;stop-opacity:1" /></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="1.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M 12 2 L 10 6 L 14 6 Z" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/><path d="M 9 8 L 8.5 11 L 9 12 L 15 12 L 15 11 L 15.5 8 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 10 13 L 10 16 M 14 13 L 14 16" stroke="#888" stroke-width="1"/><path d="M 10 16 L 14 16 L 14 18 L 10 18 Z" fill="#b0b0b0" stroke="#666" stroke-width="0.5"/><path d="M 10.5 18 L 13.5 18 L 13.5 19 L 10.5 19 Z" fill="#a0a0a0" stroke="#555" stroke-width="0.5"/><path d="M 11 19 L 13 19 L 13 20 L 11 20 Z" fill="#909090" stroke="#444" stroke-width="0.5"/><path d="M 11.5 20 L 12.5 20 L 12.5 21 L 11.5 21 Z" fill="#808080" stroke="#333" stroke-width="0.5"/><path d="M 8 13 L 9 13 L 9 17 L 8 17 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 15 13 L 16 13 L 16 17 L 15 17 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 6.5 18 L 7 19 L 17 19 L 17.5 18 Z" fill="#a0a0a0" stroke="#555" stroke-width="0.5"/><path d="M 7 19 L 6.5 22 L 17.5 22 L 17 19 Z" fill="#909090" stroke="#444" stroke-width="0.5"/><circle cx="12" cy="2.5" r="1.2" fill="url(#towerGradient)" filter="url(#glow)"/><circle cx="12" cy="2.5" r="0.8" fill="#FFE000" opacity="0.8"/><circle cx="12" cy="2.5" r="0.4" fill="#FFFFFF" opacity="0.9"/><line x1="12" y1="0.8" x2="12" y2="-1" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/><line x1="12" y1="0.8" x2="13.5" y2="-0.5" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/><line x1="12" y1="0.8" x2="10.5" y2="-0.5" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/></svg></div></div>
   </div>
-  <div class="sidebar-section">Projects</div>
-  <div class="project-rail" id="projectRail">
-    <div class="project-rail-loading"><div class="spinner-sm"></div></div>
+  <div class="sidebar-nav">
+    <!-- Projects Section -->
+    <div class="sidebar-section-header" id="projectsSectionHeader" onclick="toggleProjectsSection()" title="Toggle projects">
+      <span>Projects</span>
+      <svg class="section-toggle-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+    </div>
+    <div class="project-list" id="projectList" style="display:block;">
+      <div class="project-list-loading"><div class="spinner-sm"></div></div>
+    </div>
+    
+    <!-- My Profile Section -->
+    <div class="sidebar-section-header" id="profileSectionHeader" onclick="toggleProfileSection()" title="Toggle my profile">
+      <span>My Profile</span>
+      <svg class="section-toggle-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+    </div>
+    <div class="profile-section collapsed" id="profileSection">
+      <a href="employee_personal.html" class="nav-item">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span class="nav-label">View Profile</span>
+      </a>
+    </div>
   </div>
   <div class="project-flyout" id="projectFlyout">
     <div class="flyout-arrow"></div>
@@ -43,15 +61,20 @@
     </div>
   </div>
   <div class="content dm-content" id="decisionsContent" style="display:none">
-    <div class="dm-card">
+    <div class="dm-card" id="decisionCard">
       <div class="dm-card-header">
-        <div class="dm-header-icon">
-          <svg viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <div class="dm-header-left">
+          <div class="dm-header-icon">
+            <svg viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div class="dm-header-text">
+            <h2 class="dm-page-title">Decision Timeline Map</h2>
+            <p class="dm-page-subtitle">Explore all decisions across categories and sprints</p>
+          </div>
         </div>
-        <div class="dm-header-text">
-          <h2 class="dm-page-title">Decision Timeline Map</h2>
-          <p class="dm-page-subtitle">Explore all decisions across categories and sprints</p>
-        </div>
+        <button class="dm-expand-btn" id="expandDecisionsBtn" title="Expand to fullscreen" onclick="expandDecisionsTimeline()">
+          <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="3" y2="21"/></svg>
+        </button>
       </div>
       <div class="dm-card-body" id="decisionMapPageContainer"></div>
     </div>
@@ -233,6 +256,13 @@ const overlay = document.getElementById('sidebarOverlay');
 if (localStorage.getItem('sidebarCollapsed') === 'true') {
   sidebar.classList.add('collapsed');
   document.body.classList.add('sidebar-collapsed');
+  // Also collapse projects section when sidebar is collapsed
+  const projectList = document.getElementById('projectList');
+  const projectsHeader = document.getElementById('projectsSectionHeader');
+  if (projectList && projectsHeader) {
+    projectList.classList.add('collapsed');
+    projectsHeader.classList.add('collapsed');
+  }
 }
 
 toggleBtn.addEventListener('click', () => {
@@ -244,12 +274,32 @@ toggleBtn.addEventListener('click', () => {
     sidebar.classList.toggle('collapsed');
     document.body.classList.toggle('sidebar-collapsed');
     localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+    
+    // Also collapse/expand projects section when sidebar is collapsed/expanded
+    const projectList = document.getElementById('projectList');
+    const projectsHeader = document.getElementById('projectsSectionHeader');
+    if (projectList && projectsHeader) {
+      if (sidebar.classList.contains('collapsed')) {
+        projectList.classList.add('collapsed');
+        projectsHeader.classList.add('collapsed');
+      } else {
+        projectList.classList.remove('collapsed');
+        projectsHeader.classList.remove('collapsed');
+      }
+    }
   }
 });
 
 overlay.addEventListener('click', () => {
   sidebar.classList.remove('mobile-open');
   overlay.classList.remove('visible');
+});
+
+// Initialize sidebar sections state
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof initSectionStates === 'function') {
+    initSectionStates();
+  }
 });
 </script>
 <script type="module" src="/static/js/project_dashboard.js"></script>

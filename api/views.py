@@ -91,12 +91,30 @@ class HelloPreetyView(APIView):
     get=extend_schema(
         tags=['Commits'],
         summary='List all commits',
-        description='Returns every git commit stored in the knowledge base, newest first. Includes changed files.',
+        description='Returns every git commit stored in the knowledge base, newest first. Includes changed files. Optional: filter by project_id.',
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter commits by project UUID.',
+            ),
+        ],
     ),
 )
 class CommitListView(generics.ListAPIView):
     serializer_class = GitCommitSerializer
-    queryset = GitCommit.objects.prefetch_related('files').all()
+    
+    def get_queryset(self):
+        qs = GitCommit.objects.prefetch_related('files').all()
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            # Filter by project via ProjectEntity
+            from knowledge_base.models import ProjectEntity
+            commit_ids = ProjectEntity.objects.filter(
+                project_id=project_id,
+                entity_type='commit'
+            ).values_list('entity_id', flat=True)
+            qs = qs.filter(id__in=commit_ids)
+        return qs
 
 
 @extend_schema_view(
@@ -118,12 +136,30 @@ class CommitDetailView(generics.RetrieveAPIView):
     get=extend_schema(
         tags=['Tickets'],
         summary='List all tickets',
-        description='Returns every Jira ticket in the knowledge base.',
+        description='Returns every Jira ticket in the knowledge base. Optional: filter by project_id.',
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter tickets by project UUID.',
+            ),
+        ],
     ),
 )
 class TicketListView(generics.ListAPIView):
     serializer_class = JiraTicketSerializer
-    queryset = JiraTicket.objects.all()
+    
+    def get_queryset(self):
+        qs = JiraTicket.objects.all()
+        project_id = self.request.query_params.get('project_id')
+        if project_id and project_id != 'all':
+            # Filter by project via ProjectEntity
+            from knowledge_base.models import ProjectEntity
+            ticket_ids = ProjectEntity.objects.filter(
+                project_id=project_id,
+                entity_type='jira_ticket'
+            ).values_list('entity_id', flat=True)
+            qs = qs.filter(id__in=ticket_ids)
+        return qs
 
 
 @extend_schema_view(
@@ -216,12 +252,16 @@ class PageDetailView(generics.RetrieveAPIView):
         summary='List all meetings',
         description=(
             'Returns meetings with full transcript. '
-            'Optionally filter by exact date using `?date=YYYY-MM-DD`.'
+            'Optionally filter by exact date using `?date=YYYY-MM-DD` or by project using `?project_id=UUID`.'
         ),
         parameters=[
             OpenApiParameter(
                 name='date', type=str, location=OpenApiParameter.QUERY,
                 required=False, description='Filter by meeting date (YYYY-MM-DD).',
+            ),
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter meetings by project UUID.',
             ),
         ],
     ),
@@ -232,8 +272,20 @@ class MeetingListView(generics.ListAPIView):
     def get_queryset(self):
         qs = Meeting.objects.all()
         date = self.request.query_params.get('date')
+        project_id = self.request.query_params.get('project_id')
+        
         if date:
             qs = qs.filter(meeting_date__date=date)
+        
+        if project_id:
+            # Filter by project via ProjectEntity
+            from knowledge_base.models import ProjectEntity
+            meeting_ids = ProjectEntity.objects.filter(
+                project_id=project_id,
+                entity_type='meeting'
+            ).values_list('entity_id', flat=True)
+            qs = qs.filter(id__in=meeting_ids)
+        
         return qs
 
 
@@ -480,7 +532,13 @@ class SprintTicketsOutcomeView(views.APIView):
         },
     )
     def get(self, request, sprint_number):
-        sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number)
+        # Support optional project_id query param (sprint_number alone may not be unique)
+        project_id = request.query_params.get('project_id')
+        if project_id:
+            sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number, project_id=project_id)
+        else:
+            # Fall back to first sprint with this number if no project specified
+            sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number)
         return Response(SprintOutcomeSerializer(sprint).data)
 
 
@@ -500,7 +558,13 @@ class SprintMeetingsView(views.APIView):
         },
     )
     def get(self, request, sprint_number):
-        sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number)
+        # Support optional project_id query param (sprint_number alone may not be unique)
+        project_id = request.query_params.get('project_id')
+        if project_id:
+            sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number, project_id=project_id)
+        else:
+            # Fall back to first sprint with this number if no project specified
+            sprint = generics.get_object_or_404(Sprint, sprint_number=sprint_number)
         meetings = Meeting.objects.filter(
             meeting_date__date__gte=sprint.start_date,
             meeting_date__date__lte=sprint.end_date,
@@ -615,12 +679,24 @@ class EmployeeDetailView(generics.RetrieveAPIView):
     get=extend_schema(
         tags=['Sprints'],
         summary='List all sprints',
-        description='Returns all sprints with their linked tickets.',
+        description='Returns all sprints with their linked tickets. Optional: filter by project_id.',
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter sprints by project UUID.',
+            ),
+        ],
     ),
 )
 class SprintListView(generics.ListAPIView):
     serializer_class = SprintSerializer
-    queryset = Sprint.objects.prefetch_related('sprint_tickets').all()
+    
+    def get_queryset(self):
+        qs = Sprint.objects.prefetch_related('sprint_tickets').all()
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        return qs
 
 
 @extend_schema_view(
@@ -765,6 +841,379 @@ class ChatView(APIView):
             'conversation_id': conversation_id,
             'turn': response.conversation_turn,
         })
+
+
+# ── Query (Alias for Chat) ─────────────────────────────────────────────────────
+
+class QueryView(APIView):
+    """POST /api/query/ — alias for chat endpoint for extension compatibility."""
+
+    @extend_schema(
+        tags=['Chat'],
+        summary='Chat with the AI assistant (extension endpoint)',
+        description=(
+            'Alias for the chat endpoint. Send a natural-language query to the chatbot. '
+            'Pass `conversation_id` to continue an existing conversation, omit it to start fresh.'
+        ),
+        request=_ChatRequestSerializer,
+        responses={
+            200: _ChatResponseSerializer,
+            400: _ErrorSerializer,
+            503: _ErrorSerializer,
+        },
+    )
+    def post(self, request):
+        query = (request.data.get('query') or '').strip()
+        if not query:
+            return Response({'error': 'Field "query" is required.'}, status=400)
+
+        conversation_id = request.data.get('conversation_id') or str(uuid.uuid4())
+
+        # Get or create a chatbot instance for this conversation
+        if conversation_id not in _chat_sessions:
+            try:
+                from chatbot.main import OnboardingChatbot
+                _chat_sessions[conversation_id] = OnboardingChatbot()
+            except Exception as e:
+                return Response(
+                    {'error': f'Failed to initialize chatbot: {str(e)}'},
+                    status=503,
+                )
+
+        bot = _chat_sessions[conversation_id]
+
+        try:
+            response = bot.chat(query)
+        except Exception as e:
+            return Response({'error': f'Chatbot error: {str(e)}'}, status=503)
+
+        return Response({
+            'answer': response.answer,
+            'intent': response.intent,
+            'confidence': response.confidence,
+            'sources': response.sources,
+            'conversation_id': conversation_id,
+            'turn': response.conversation_turn,
+        })
+
+
+# ── Ticket Comments ───────────────────────────────────────────────────────────
+
+class TicketCommentsView(APIView):
+    """POST /api/tickets/<issue_key>/comments/ — add a comment to a ticket."""
+
+    @extend_schema(
+        tags=['Tickets'],
+        summary='Add comment to ticket',
+        description='Add a comment to a Jira ticket. Stores in the ticket comments field.',
+        request=inline_serializer('AddCommentRequest', fields={
+            'text': drf_serializers.CharField(),
+            'author': drf_serializers.CharField(required=False),
+        }),
+        responses={
+            201: inline_serializer('TicketComment', fields={
+                'id': drf_serializers.UUIDField(),
+                'ticket_id': drf_serializers.CharField(),
+                'author': drf_serializers.CharField(),
+                'text': drf_serializers.CharField(),
+                'created_at': drf_serializers.DateTimeField(),
+            }),
+            400: _ErrorSerializer,
+            404: _ErrorSerializer,
+        },
+    )
+    def post(self, request, issue_key):
+        ticket = generics.get_object_or_404(JiraTicket, issue_key=issue_key)
+        
+        text = request.data.get('text', '').strip()
+        author = request.data.get('author', 'Unknown').strip()
+        
+        if not text:
+            return Response({'error': 'Comment text is required.'}, status=400)
+        
+        # Append comment to existing comments
+        from datetime import datetime
+        comment_entry = f"[{datetime.now().isoformat()}] {author}: {text}"
+        
+        if ticket.comments:
+            ticket.comments += f"\n\n{comment_entry}"
+        else:
+            ticket.comments = comment_entry
+        
+        ticket.save()
+        
+        return Response({
+            'id': uuid.uuid4(),
+            'ticket_id': issue_key,
+            'author': author,
+            'text': text,
+            'created_at': datetime.now().isoformat(),
+        }, status=201)
+
+
+# ── Teams Messages ─────────────────────────────────────────────────────────────
+
+class TeamsMessagesView(generics.ListAPIView):
+    """GET /api/teams/messages/ — list Teams messages (placeholder for Teams integration)."""
+
+    @extend_schema(
+        tags=['Teams'],
+        summary='List Teams messages',
+        description='Get Teams messages for a project. Optional: filter by project_id.',
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter messages by project UUID.',
+            ),
+            OpenApiParameter(
+                name='channel', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter messages by channel name.',
+            ),
+        ],
+        responses={
+            200: inline_serializer('TeamsMessageList', fields={
+                'id': drf_serializers.CharField(),
+                'channel': drf_serializers.CharField(),
+                'sender': drf_serializers.CharField(),
+                'text': drf_serializers.CharField(),
+                'timestamp': drf_serializers.DateTimeField(required=False),
+                'likes': drf_serializers.IntegerField(required=False),
+                'replies': drf_serializers.IntegerField(required=False),
+            }, many=True),
+        },
+    )
+    def get(self, request):
+        # Placeholder implementation - returns sample data
+        # In production, this would integrate with Microsoft Teams API
+        project_id = request.query_params.get('project_id')
+        channel = request.query_params.get('channel', '')
+        
+        # Sample Teams messages
+        messages = [
+            {
+                'id': 'msg-1',
+                'channel': '#general',
+                'sender': 'John Doe',
+                'text': 'Sprint 3 planning meeting will be at 2 PM today.',
+                'timestamp': '2026-05-11T10:30:00Z',
+                'likes': 2,
+                'replies': 1,
+            },
+            {
+                'id': 'msg-2',
+                'channel': '#engineering',
+                'sender': 'Jane Smith',
+                'text': 'PR #234 is ready for review - OAuth implementation',
+                'timestamp': '2026-05-11T09:15:00Z',
+                'likes': 5,
+                'replies': 3,
+            },
+            {
+                'id': 'msg-3',
+                'channel': '#product',
+                'sender': 'Mike Wilson',
+                'text': 'Dashboard UX improvements deployed to staging',
+                'timestamp': '2026-05-10T16:45:00Z',
+                'likes': 8,
+                'replies': 2,
+            },
+        ]
+        
+        # Filter by channel if provided
+        if channel:
+            messages = [m for m in messages if channel.lower() in m['channel'].lower()]
+        
+        return Response(messages)
+
+
+# ── Activity ───────────────────────────────────────────────────────────────────
+
+class ActivityView(generics.ListAPIView):
+    """GET /api/activity/ — get recent project activity."""
+
+    @extend_schema(
+        tags=['Activity'],
+        summary='Get recent activity',
+        description='Get recent project activity including commits, ticket changes, meetings, etc. Optional: filter by project_id.',
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=str, location=OpenApiParameter.QUERY,
+                required=False, description='Filter activity by project UUID.',
+            ),
+            OpenApiParameter(
+                name='limit', type=int, location=OpenApiParameter.QUERY,
+                required=False, description='Maximum number of activities to return (default 20).',
+            ),
+        ],
+        responses={
+            200: inline_serializer('ActivityList', fields={
+                'id': drf_serializers.CharField(),
+                'title': drf_serializers.CharField(),
+                'description': drf_serializers.CharField(),
+                'type': drf_serializers.CharField(),
+                'timestamp': drf_serializers.DateTimeField(),
+                'project_id': drf_serializers.CharField(required=False),
+            }, many=True),
+        },
+    )
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        limit = int(request.query_params.get('limit', 20))
+        
+        activities = []
+        
+        # Get recent commits
+        commits = GitCommit.objects.all().order_by('-commit_date')[:5]
+        for commit in commits:
+            activities.append({
+                'id': commit.sha[:8],
+                'title': 'Git Commit',
+                'description': commit.message[:100],
+                'type': 'commit',
+                'timestamp': commit.commit_date.isoformat() if commit.commit_date else None,
+                'project_id': project_id or 'all',
+            })
+        
+        # Get recent ticket updates
+        tickets = JiraTicket.objects.all().order_by('-updated_date')[:5]
+        for ticket in tickets:
+            activities.append({
+                'id': ticket.issue_key,
+                'title': f'Ticket Update: {ticket.issue_key}',
+                'description': ticket.summary[:100],
+                'type': 'ticket',
+                'timestamp': (ticket.updated_date or ticket.created_date).isoformat() if (ticket.updated_date or ticket.created_date) else None,
+                'project_id': project_id or 'all',
+            })
+        
+        # Get recent meetings
+        meetings = Meeting.objects.all().order_by('-meeting_date')[:3]
+        for meeting in meetings:
+            activities.append({
+                'id': str(meeting.id),
+                'title': 'Meeting',
+                'description': meeting.title or f'Meeting {meeting.id}',
+                'type': 'meeting',
+                'timestamp': (meeting.meeting_date or meeting.created_at).isoformat() if (meeting.meeting_date or meeting.created_at) else None,
+                'project_id': project_id or 'all',
+            })
+        
+        # Sort by timestamp, newest first
+        activities = [a for a in activities if a['timestamp'] is not None]
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Return limited results
+        return Response(activities[:limit])
+
+
+# ── Ticket Management ──────────────────────────────────────────────────────────
+
+class UpdateTicketStatusView(APIView):
+    """PATCH /api/tickets/<issue_key>/status/ — update ticket status and assignee."""
+
+    @extend_schema(
+        tags=['Tickets'],
+        summary='Update ticket status',
+        description='Update the status and/or assignee of a Jira ticket.',
+        request=inline_serializer('UpdateTicketStatusRequest', fields={
+            'status': drf_serializers.CharField(required=False),
+            'assignee': drf_serializers.CharField(required=False),
+        }),
+        responses={
+            200: JiraTicketSerializer,
+            400: _ErrorSerializer,
+            404: _ErrorSerializer,
+        },
+    )
+    def patch(self, request, issue_key):
+        ticket = generics.get_object_or_404(JiraTicket, issue_key=issue_key)
+        
+        status = request.data.get('status')
+        assignee = request.data.get('assignee')
+        
+        if status:
+            ticket.status = status
+        if assignee:
+            ticket.assignee = assignee
+        
+        ticket.save()
+        return Response(JiraTicketSerializer(ticket).data)
+
+
+class CreateTicketView(APIView):
+    """POST /api/tickets/create/ — create a new Jira ticket."""
+
+    @extend_schema(
+        tags=['Tickets'],
+        summary='Create new ticket',
+        description='Create a new Jira ticket with summary, description, assignee, etc.',
+        request=inline_serializer('CreateTicketRequest', fields={
+            'summary': drf_serializers.CharField(),
+            'description': drf_serializers.CharField(required=False),
+            'assignee': drf_serializers.CharField(required=False),
+            'priority': drf_serializers.CharField(required=False),
+            'issue_type': drf_serializers.CharField(required=False),
+        }),
+        responses={
+            201: JiraTicketSerializer,
+            400: _ErrorSerializer,
+        },
+    )
+    def post(self, request):
+        summary = request.data.get('summary', '').strip()
+        description = request.data.get('description', '').strip()
+        assignee = request.data.get('assignee', 'Unassigned').strip()
+        priority = request.data.get('priority', 'Medium').strip()
+        issue_type = request.data.get('issue_type', 'Task').strip()
+        status = request.data.get('status', 'Active').strip() or 'Active'
+        
+        if not summary:
+            return Response({'error': 'Summary is required.'}, status=400)
+        
+        # Generate issue key (e.g., TASK-1001, TASK-1002, etc.)
+        from django.db.models import Max
+        from django.utils import timezone
+        last_ticket = JiraTicket.objects.filter(
+            issue_key__startswith='TASK-'
+        ).order_by('issue_key').last()
+        
+        if last_ticket:
+            last_num = int(last_ticket.issue_key.split('-')[1])
+            new_num = last_num + 1
+        else:
+            new_num = 1001
+        
+        issue_key = f'TASK-{new_num}'
+        
+        ticket = JiraTicket.objects.create(
+            issue_key=issue_key,
+            summary=summary,
+            description=description,
+            assignee=assignee,
+            priority=priority,
+            issue_type=issue_type,
+            status=status,
+            reporter='Extension User',
+            created_date=timezone.now(),
+            updated_date=timezone.now(),
+        )
+        
+        return Response(JiraTicketSerializer(ticket).data, status=201)
+
+
+class EmployeeListView(generics.ListAPIView):
+    """GET /api/employees/ — list all team members for assignment."""
+
+    serializer_class = EmployeeSerializer
+    queryset = Employee.objects.all()
+
+    @extend_schema(
+        tags=['Employees'],
+        summary='List team members',
+        description='Get all employees for task assignment purposes.',
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
 
 
 class DeleteView(APIView):

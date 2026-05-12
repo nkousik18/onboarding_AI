@@ -4,20 +4,32 @@ from . import views
 urlpatterns = [
     # Chat
     path("chat/", views.ChatView.as_view(), name="chat"),
+    path("query/", views.QueryView.as_view(), name="query"),  # Alias for chat
     # Commits
     path("commits/", views.CommitListView.as_view(), name="commit-list"),
     path("commits/<str:sha>/", views.CommitDetailView.as_view(), name="commit-detail"),
     # Tickets
     path("tickets/", views.TicketListView.as_view(), name="ticket-list"),
+    path("tickets/create/", views.CreateTicketView.as_view(), name="ticket-create"),
     path(
         "tickets/<str:issue_key>/",
         views.TicketDetailView.as_view(),
         name="ticket-detail",
     ),
     path(
+        "tickets/<str:issue_key>/status/",
+        views.UpdateTicketStatusView.as_view(),
+        name="ticket-status",
+    ),
+    path(
         "tickets/<str:issue_key>/context/",
         views.TicketContextView.as_view(),
         name="ticket-context",
+    ),
+    path(
+        "tickets/<str:issue_key>/comments/",
+        views.TicketCommentsView.as_view(),
+        name="ticket-comments",
     ),
     # Confluence Pages
     path("pages/", views.PageListView.as_view(), name="page-list"),
@@ -27,6 +39,10 @@ urlpatterns = [
     path(
         "meetings/<uuid:pk>/", views.MeetingDetailView.as_view(), name="meeting-detail"
     ),
+    # Teams
+    path("teams/messages/", views.TeamsMessagesView.as_view(), name="teams-messages"),
+    # Activity
+    path("activity/", views.ActivityView.as_view(), name="activity"),
     # Projects
     path("projects/", views.ProjectListView.as_view(), name="project-list"),
     path(

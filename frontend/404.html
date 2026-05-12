@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Page Not Found — LightHouse</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/css/theme-light.css">
+<script src="static/js/theme-toggle.js" defer></script>
+<style>
+  body { font-family: Source Sans 3, sans-serif; margin: 0; padding: 0; background: var(--bg-primary, #fff); color: var(--text-primary, #000); }
+  .error-container { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; text-align: center; }
+  .error-code { font-family: Rajdhani, sans-serif; font-size: 5rem; font-weight: 700; margin: 0; background: linear-gradient(135deg, #8A63FF, #6399FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .error-title { font-family: Rajdhani, sans-serif; font-size: 2rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--text-primary, #000); }
+  .error-desc { font-size: 1.1rem; color: var(--text-secondary, #666); margin: 0 0 2rem; max-width: 500px; line-height: 1.6; }
+  .btn { display: inline-block; padding: 0.75rem 1.5rem; border: none; border-radius: 6px; font-family: Source Sans 3, sans-serif; font-size: 1rem; cursor: pointer; text-decoration: none; transition: all 0.2s ease; margin: 0.5rem; }
+  .btn-primary { background: linear-gradient(135deg, #8A63FF, #6399FF); color: #fff; }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(138, 99, 255, 0.3); }
+  .btn-secondary { background: var(--bg-secondary, #f0f0f0); color: var(--text-primary, #000); border: 1px solid var(--border-color, #ddd); }
+  .btn-secondary:hover { background: var(--bg-tertiary, #e8e8e8); }
+  .home-link { margin-top: 2rem; }
+</style>
+</head>
+<body>
+<div class="error-container">
+  <div class="error-code">404</div>
+  <h1 class="error-title">Page Not Found</h1>
+  <p class="error-desc">The page you're looking for doesn't exist or has been moved. Let's get you back on track.</p>
+  <div class="home-link">
+    <a href="home.html" class="btn btn-primary">Go to Home</a>
+    <a href="project_dashboard.html" class="btn btn-secondary">View Projects</a>
+  </div>
+</div>
+</body>
+</html>

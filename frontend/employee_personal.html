@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Profile — LightHouse</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/css/project_dashboard.css">
+<link rel="stylesheet" href="static/css/employee_personal.css">
+</head>
+<body>
+<div class="page-bg"></div>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-top-row">
+    <button class="sidebar-hamburger" id="sidebarToggle" title="Toggle sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+    <div class="sidebar-logo"><div class="logo-text">Light<span>House</span></div><div class="logo-icon"><svg viewBox="0 0 24 24" class="tower-svg"><defs><linearGradient id="towerGradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" /><stop offset="100%" style="stop-color:#FFA500;stop-opacity:1" /></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="1.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M 12 2 L 10 6 L 14 6 Z" fill="#e0e0e0" stroke="#999" stroke-width="0.5"/><path d="M 9 8 L 8.5 11 L 9 12 L 15 12 L 15 11 L 15.5 8 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 10 13 L 10 16 M 14 13 L 14 16" stroke="#888" stroke-width="1"/><path d="M 10 16 L 14 16 L 14 18 L 10 18 Z" fill="#b0b0b0" stroke="#666" stroke-width="0.5"/><path d="M 10.5 18 L 13.5 18 L 13.5 19 L 10.5 19 Z" fill="#a0a0a0" stroke="#555" stroke-width="0.5"/><path d="M 11 19 L 13 19 L 13 20 L 11 20 Z" fill="#909090" stroke="#444" stroke-width="0.5"/><path d="M 11.5 20 L 12.5 20 L 12.5 21 L 11.5 21 Z" fill="#808080" stroke="#333" stroke-width="0.5"/><path d="M 8 13 L 9 13 L 9 17 L 8 17 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 15 13 L 16 13 L 16 17 L 15 17 Z" fill="#c0c0c0" stroke="#777" stroke-width="0.5"/><path d="M 6.5 18 L 7 19 L 17 19 L 17.5 18 Z" fill="#a0a0a0" stroke="#555" stroke-width="0.5"/><path d="M 7 19 L 6.5 22 L 17.5 22 L 17 19 Z" fill="#909090" stroke="#444" stroke-width="0.5"/><circle cx="12" cy="2.5" r="1.2" fill="url(#towerGradient)" filter="url(#glow)"/><circle cx="12" cy="2.5" r="0.8" fill="#FFE000" opacity="0.8"/><circle cx="12" cy="2.5" r="0.4" fill="#FFFFFF" opacity="0.9"/><line x1="12" y1="0.8" x2="12" y2="-1" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/><line x1="12" y1="0.8" x2="13.5" y2="-0.5" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/><line x1="12" y1="0.8" x2="10.5" y2="-0.5" stroke="#FFD700" stroke-width="0.4" opacity="0.7"/></svg></div></div>
+  </div>
+  <div class="sidebar-section">Navigation</div>
+  <div class="sidebar-menu">
+    <a href="project_overview" class="sidebar-menu-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg><span>Projects</span></a>
+    <a href="project_overview" class="sidebar-menu-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Decisions</span></a>
+    <a href="#" class="sidebar-menu-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>My Profile</span></a>
+  </div>
+  <div class="sidebar-bottom"><div class="user-chip"><div class="avatar-sm" id="userAvatar">—</div><div><div class="user-name" id="sidebarUserName">Loading...</div><div class="user-role">Employee</div></div><a href="login.html" class="logout-btn" onclick="sessionStorage.clear()"><svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></a></div></div>
+</nav>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<div class="main">
+  <div class="topbar"><div><div class="page-title">My Profile</div><div class="page-sub" id="topbarSub">Welcome back, reviewing your tasks and skills</div></div></div>
+  
+  <div class="content">
+    <div class="ep-layout">
+      <!-- Left: Daily Tasks + Calendar -->
+      <div class="ep-main">
+        <div class="ep-section ep-tasks-section">
+          <div class="ep-section-header">
+            <h2>Daily Tasks</h2>
+            <div class="ep-date-display" id="currentDate">Today</div>
+          </div>
+          <div class="ep-tasks-container" id="tasksContainer">
+            <div class="ep-task-loading"><div class="spinner-sm"></div></div>
+          </div>
+        </div>
+
+        <!-- Calendar at bottom of main -->
+        <div class="ep-section ep-calendar-section">
+          <div class="ep-section-header">
+            <h2>Calendar</h2>
+          </div>
+          <div class="ep-calendar" id="calendar">
+            <div class="cal-header">
+              <button id="prevMonth" class="cal-nav-btn">←</button>
+              <h3 id="monthYear"></h3>
+              <button id="nextMonth" class="cal-nav-btn">→</button>
+            </div>
+            <div class="cal-grid" id="calendarGrid"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Skills + Calendar Preview -->
+      <div class="ep-sidebar">
+        <div class="ep-section ep-skills-section">
+          <div class="ep-section-header">
+            <h2>Your Skills</h2>
+          </div>
+          <div class="ep-skills-container" id="skillsContainer">
+            <p class="ep-placeholder">Loading your project skills...</p>
+          </div>
+        </div>
+
+        <div class="ep-section ep-meetings-section">
+          <div class="ep-section-header">
+            <h2>Today's Schedule</h2>
+          </div>
+          <div class="ep-meetings-container" id="meetingsContainer">
+            <p class="ep-placeholder">No scheduled meetings</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Task Detail Modal -->
+<div class="ep-modal" id="taskModal">
+  <div class="ep-modal-overlay"></div>
+  <div class="ep-modal-content">
+    <div class="ep-modal-header">
+      <h3 id="modalTaskTitle">Task Details</h3>
+      <button class="ep-modal-close" onclick="document.getElementById('taskModal').classList.remove('active')">✕</button>
+    </div>
+    <div class="ep-modal-body">
+      <div class="ep-task-detail">
+        <div class="etd-field">
+          <label>Task ID</label>
+          <div id="modalTaskId" class="etd-value"></div>
+        </div>
+        <div class="etd-field">
+          <label>Status</label>
+          <div id="modalTaskStatus" class="etd-value"></div>
+        </div>
+        <div class="etd-field">
+          <label>Priority</label>
+          <div id="modalTaskPriority" class="etd-value"></div>
+        </div>
+        <div class="etd-field">
+          <label>Description</label>
+          <div id="modalTaskDesc" class="etd-value"></div>
+        </div>
+        <div class="etd-field">
+          <label>Comment</label>
+          <textarea id="taskComment" class="etd-textarea" placeholder="Add a comment before completing..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="ep-modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('taskModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="completeTaskBtn">Mark as Complete</button>
+    </div>
+  </div>
+</div>
+
+<script src="static/js/employee_personal.js"></script>
+</body>
+</html>

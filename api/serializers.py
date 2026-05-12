@@ -270,3 +270,35 @@ class SprintOutcomeSerializer(serializers.ModelSerializer):
 
     def get_pending_count(self, obj):
         return self.get_total_tickets(obj) - self.get_completed_count(obj)
+
+
+# ── Chrome Extension Serializers ───────────────────────────────────────────────
+
+class TicketCommentSerializer(serializers.Serializer):
+    """Serializer for ticket comments."""
+    id = serializers.UUIDField(required=False)
+    ticket_id = serializers.CharField()
+    author = serializers.CharField()
+    text = serializers.CharField()
+    created_at = serializers.DateTimeField(required=False)
+
+
+class TeamsMessageSerializer(serializers.Serializer):
+    """Serializer for Teams messages."""
+    id = serializers.CharField()
+    channel = serializers.CharField()
+    sender = serializers.CharField()
+    text = serializers.CharField()
+    timestamp = serializers.DateTimeField(required=False)
+    likes = serializers.IntegerField(required=False)
+    replies = serializers.IntegerField(required=False)
+
+
+class ActivitySerializer(serializers.Serializer):
+    """Serializer for activity feed."""
+    id = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    type = serializers.CharField()
+    timestamp = serializers.DateTimeField()
+    project_id = serializers.CharField(required=False)

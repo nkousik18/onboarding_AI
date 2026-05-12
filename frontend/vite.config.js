@@ -34,6 +34,7 @@ export default defineConfig({
             '/forgot_password':  '/forgot_password.html',
             '/detail':           '/detail.html',
             '/home':             '/home.html',
+            '/employee':         '/employee_personal.html',
           };
           if (rewrites[req.url]) {
             req.url = rewrites[req.url];
@@ -56,6 +57,7 @@ export default defineConfig({
         forgot_password: resolve(__dirname, 'forgot_password.html'),
         detail: resolve(__dirname, 'detail.html'),
         home: resolve(__dirname, 'home.html'),
+        employee_personal: resolve(__dirname, 'employee_personal.html'),
       },
     },
   },

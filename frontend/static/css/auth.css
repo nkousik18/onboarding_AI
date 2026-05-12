@@ -349,6 +349,34 @@ html, body {
   stroke-linecap: round; stroke-linejoin: round;
 }
 
+/* ── Lighthouse Icon Animations ───────────────── */
+.auth-brand-icon {
+  animation: icon-float 3s ease-in-out infinite;
+}
+
+.lighthouse-svg {
+  animation: lighthouse-glow 2.5s ease-in-out infinite;
+}
+
+.light-pulse {
+  animation: pulse-light 1.5s ease-in-out infinite;
+}
+
+@keyframes icon-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes lighthouse-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.4)); }
+  50% { filter: drop-shadow(0 0 16px rgba(255, 215, 0, 0.8)); }
+}
+
+@keyframes pulse-light {
+  0%, 100% { r: 3px; opacity: 0.4; }
+  50% { r: 4.5px; opacity: 0.8; }
+}
+
 @media (max-width: 480px) {
   .auth-card { padding: 2rem 1.5rem; }
   .password-requirements { grid-template-columns: 1fr; }
