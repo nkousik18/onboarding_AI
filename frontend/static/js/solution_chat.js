@@ -523,7 +523,7 @@ function renderHistoryList() {
       hideThinking();
       addMessage('bot',
         `<p>Sorry, I ran into an error: <code>${escHtml(err.message)}</code></p>` +
-        `<p>Make sure the backend is running and <code>BYTEZ_API_KEY</code> is set in your <code>.env</code>.</p>`
+        `<p>Make sure the backend is running and set <code>GROQ_API_KEY</code> (or <code>BYTEZ_API_KEY</code>) in your <code>.env</code>.</p>`
       );
     }
   }

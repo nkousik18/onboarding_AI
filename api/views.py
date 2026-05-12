@@ -151,7 +151,7 @@ class TicketListView(generics.ListAPIView):
     def get_queryset(self):
         qs = JiraTicket.objects.all()
         project_id = self.request.query_params.get('project_id')
-        if project_id:
+        if project_id and project_id != 'all':
             # Filter by project via ProjectEntity
             from knowledge_base.models import ProjectEntity
             ticket_ids = ProjectEntity.objects.filter(
@@ -1165,6 +1165,7 @@ class CreateTicketView(APIView):
         assignee = request.data.get('assignee', 'Unassigned').strip()
         priority = request.data.get('priority', 'Medium').strip()
         issue_type = request.data.get('issue_type', 'Task').strip()
+        status = request.data.get('status', 'Active').strip() or 'Active'
         
         if not summary:
             return Response({'error': 'Summary is required.'}, status=400)
@@ -1191,7 +1192,7 @@ class CreateTicketView(APIView):
             assignee=assignee,
             priority=priority,
             issue_type=issue_type,
-            status='To Do',
+            status=status,
             reporter='Extension User',
             created_date=timezone.now(),
             updated_date=timezone.now(),

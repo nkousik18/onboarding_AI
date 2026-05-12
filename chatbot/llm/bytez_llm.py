@@ -12,7 +12,9 @@ from openai import OpenAI
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+# Backward compatibility: accept either GROQ_API_KEY (preferred)
+# or BYTEZ_API_KEY from older project setup docs.
+GROQ_API_KEY = os.getenv('GROQ_API_KEY') or os.getenv('BYTEZ_API_KEY')
 GROQ_MODEL   = 'llama-3.1-8b-instant'
 
 
@@ -35,15 +37,22 @@ class BytezLLM:
         self._init_client()
 
     def _init_client(self):
+        if not self.api_key:
+            self._available = False
+            self._init_error = 'Missing API key. Set GROQ_API_KEY (preferred) or BYTEZ_API_KEY in .env.'
+            return
+
         try:
             self._client = OpenAI(
                 api_key=self.api_key,
                 base_url='https://api.groq.com/openai/v1',
             )
             self._available = True
+            self._init_error = None
         except Exception as e:
             print(f"Warning: Failed to initialize Groq client: {e}")
             self._available = False
+            self._init_error = str(e)
 
     @property
     def is_available(self) -> bool:
@@ -51,7 +60,8 @@ class BytezLLM:
 
     def generate(self, prompt: str, system_prompt: str = None) -> str:
         if not self._available:
-            return "Error: LLM not available. Please check your Groq API configuration."
+            msg = self._init_error or 'LLM not available.'
+            return f"Error: {msg}"
         try:
             messages = []
             if system_prompt:

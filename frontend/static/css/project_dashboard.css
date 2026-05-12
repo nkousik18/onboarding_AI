@@ -1776,6 +1776,16 @@ body.solution-open .main {
   color: var(--accent); text-transform: uppercase; letter-spacing: .6px;
   margin-bottom: 10px;
 }
+.ai-label svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .ai-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.5s infinite; }
 .ai-summary-text { font-size: 15px; color: var(--secondary); line-height: 1.7; }
 .ai-summary-text strong { color: var(--text); }
