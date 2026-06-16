@@ -156,6 +156,9 @@ class ConfluencePage(models.Model):
     page_created_date = models.DateTimeField(blank=True, null=True)
     page_updated_date = models.DateTimeField(blank=True, null=True)
     source_filename = models.CharField(max_length=255, blank=True, null=True)
+    drift_risk = models.CharField(max_length=10, blank=True, null=True)
+    last_activity_date = models.DateTimeField(blank=True, null=True)
+    confluence_topics = ArrayField(models.TextField(), blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -416,6 +419,12 @@ class Decision(models.Model):
     )
     confidence_score = models.FloatField(blank=True, null=True)
     extraction_notes = models.TextField(blank=True, null=True)
+    last_reinforced_at = models.DateTimeField(blank=True, null=True)
+    drift_risk = models.CharField(
+        max_length=10,
+        choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High')],
+        blank=True, null=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -429,17 +438,11 @@ class Decision(models.Model):
 
 
 class DecisionConflict(models.Model):
-    """
-    Records a detected conflict between two active decisions.
-    Populated by check_conflicts.py.
-    """
-
     CONFLICT_TYPE_CHOICES = [
-        ('direct',   'Direct'),    # mutually exclusive choices (e.g. Material UI vs Tailwind)
-        ('indirect', 'Indirect'),  # tension that may cause problems (e.g. two DB access layers)
-        ('potential','Potential'), # flagged for human review; LLM uncertain
+        ('direct',    'Direct'),
+        ('indirect',  'Indirect'),
+        ('potential', 'Potential'),
     ]
-
     SEVERITY_CHOICES = [
         ('low',    'Low'),
         ('medium', 'Medium'),
