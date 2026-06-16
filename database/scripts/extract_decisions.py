@@ -1,20 +1,13 @@
 """
-Decision Extraction Script using DSPy-style + Bytez API
+Decision Extraction Script
 
-This script extracts decisions from all data sources:
-- Meetings (key_decisions + raw transcript)
-- Confluence pages (documented decisions)
-- Jira tickets (decisions in comments)
-
-And populates the unified `decisions` table.
+Extracts decisions from meetings, Confluence pages, and Jira tickets using
+Groq (llama-3.3-70b-versatile) and populates the unified `decisions` table.
 
 Features:
-- DSPy-style Signatures and ChainOfThought
-- Deduplication based on title similarity
-- Links duplicates via related_decisions field
+- Semantic deduplication via MiniLM embeddings (cosine similarity, threshold 0.70)
 - Detects superseded decisions (e.g., Material UI → Tailwind)
-- Refined prompts to exclude task completions
-- Extracts ALL fields: impact, rationale, alternatives, etc.
+- Extracts all fields: rationale, impact, alternatives, related_tickets, decided_by
 
 Usage:
     python scripts/extract_decisions.py --all
@@ -25,7 +18,7 @@ Usage:
     python scripts/extract_decisions.py --all --skip-duplicates
 
 Requirements:
-    pip install bytez
+    GROQ_API_KEY in database/.env
 """
 
 import os
@@ -685,7 +678,7 @@ def update_related_decisions(decision: Decision, related_ids: List[str]):
 # ============================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Extract decisions using DSPy + Bytez')
+    parser = argparse.ArgumentParser(description='Extract decisions from meetings, Confluence, and Jira using Groq')
     parser.add_argument('--all', action='store_true', help='Process all sources')
     parser.add_argument('--meetings', action='store_true', help='Process meetings only')
     parser.add_argument('--confluence', action='store_true', help='Process Confluence only')
@@ -702,7 +695,7 @@ def main():
         args.all = True
     
     print("=" * 60)
-    print("DSPy-Style Decision Extractor with Bytez Backend")
+    print("Decision Extractor (Groq / llama-3.3-70b-versatile)")
     print("=" * 60)
     print(f"\nSettings:")
     print(f"  API Key: {GROQ_API_KEY[:10]}...")

@@ -15,7 +15,7 @@ load_dotenv()
 # Backward compatibility: accept either GROQ_API_KEY (preferred)
 # or BYTEZ_API_KEY from older project setup docs.
 GROQ_API_KEY = os.getenv('GROQ_API_KEY') or os.getenv('BYTEZ_API_KEY')
-GROQ_MODEL   = 'llama-3.1-8b-instant'
+GROQ_MODEL   = 'llama-3.3-70b-versatile'
 
 
 class BytezLLM:

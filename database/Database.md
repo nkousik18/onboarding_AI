@@ -1,712 +1,467 @@
-# Onboarding AI - Database Documentation
+# Database Layer — LIGHTHOUSE
 
-## Overview
-
-The Onboarding AI database stores project knowledge from multiple sources to help new team members understand project history, decisions, and context. It automatically links related information across different platforms.
-
-**Database:** PostgreSQL 16 (Hosted on Render)  
-**ORM:** Django 4.2  
-**Primary Key Type:** UUID (all tables)  
-**Total Tables:** 11
+**Database:** PostgreSQL (hosted on Render free tier)
+**ORM:** Django 5.2 with `managed = False` on all models — tables are created by raw SQL, not Django migrations
+**Primary keys:** UUID (all tables)
+**Python runtime:** 3.12 — always use `venv/bin/python3.12`, not `venv/bin/pip` (pip shebang is broken)
 
 ---
 
-## Table of Contents
-
-1. [Data Sources](#data-sources)
-2. [Schema Diagram](#schema-diagram)
-3. [Tables](#tables)
-   - [employees](#1-employees)
-   - [git_commits](#2-git_commits)
-   - [git_commit_files](#3-git_commit_files)
-   - [meetings](#4-meetings)
-   - [jira_tickets](#5-jira_tickets)
-   - [confluence_pages](#6-confluence_pages)
-   - [entity_references](#7-entity_references)
-   - [projects](#8-projects)
-   - [project_entities](#9-project_entities)
-   - [sprints](#10-sprints)
-   - [sprint_tickets](#11-sprint_tickets)
-4. [How Entity References Work](#how-entity-references-work)
-5. [How Sprints Work](#how-sprints-work)
-6. [Common Queries](#common-queries)
-7. [Django Models](#django-models)
-8. [Database Views](#database-views)
-9. [Data Ingestion](#data-ingestion)
-10. [Connection Details](#connection-details)
-
----
-
-## Data Sources
-
-| Source | Tables | Description |
-|--------|--------|-------------|
-| Team | `employees` | Team members and their roles |
-| GitHub | `git_commits`, `git_commit_files` | Code changes, authors, file modifications |
-| Jira | `jira_tickets` | Issues, bugs, tasks, epics |
-| Confluence | `confluence_pages` | Documentation, runbooks, guides |
-| Teams/Zoom | `meetings` | Meeting transcripts (VTT format) |
-| Project Management | `projects`, `sprints`, `sprint_tickets` | Project and sprint tracking |
-
----
-
-## Schema Diagram
+## Directory Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              TEAM                                            │
-│  ┌─────────────────┐                                                        │
-│  │   employees     │                                                        │
-│  │                 │                                                        │
-│  │ - name          │◄──────── Linked via name/email to commits, tickets     │
-│  │ - email         │                                                        │
-│  │ - role          │                                                        │
-│  │ - department    │                                                        │
-│  └─────────────────┘                                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         PROJECTS & SPRINTS                                   │
-│                                                                              │
-│  ┌─────────────────┐         ┌─────────────────┐         ┌───────────────┐  │
-│  │    projects     │────────▶│     sprints     │────────▶│sprint_tickets │  │
-│  │                 │   1:N   │                 │   1:N   │               │  │
-│  │ - name          │         │ - sprint_number │         │ - sprint_id   │  │
-│  │ - github_repo   │         │ - name          │         │ - ticket_id   │  │
-│  │ - jira_project  │         │ - start_date    │         │ - added_date  │  │
-│  │ - owner         │         │ - end_date      │         └───────┬───────┘  │
-│  └────────┬────────┘         │ - goal          │                 │          │
-│           │                  │ - status        │                 │          │
-│           │                  └─────────────────┘                 │          │
-│           ▼                                                      │          │
-│  ┌─────────────────┐                                             │          │
-│  │project_entities │                                             │          │
-│  │                 │                                             │          │
-│  │ Links projects  │                                             │          │
-│  │ to any entity   │                                             │          │
-│  └─────────────────┘                                             │          │
-└──────────────────────────────────────────────────────────────────┼──────────┘
-                                                                   │
-┌──────────────────────────────────────────────────────────────────┼──────────┐
-│                           DATA SOURCES                           │          │
-│                                                                  │          │
-│  ┌─────────────────┐       ┌─────────────────────┐               │          │
-│  │   git_commits   │──────▶│  git_commit_files   │               │          │
-│  │                 │  1:N  │                     │               │          │
-│  │ - sha           │       │ - filename          │               │          │
-│  │ - author        │       │ - additions         │               │          │
-│  │ - message       │       │ - deletions         │               │          │
-│  └────────┬────────┘       └─────────────────────┘               │          │
-│           │                                                      │          │
-│           │         ┌─────────────────┐       ┌─────────────────┐│          │
-│           │         │    meetings     │       │ confluence_pages││          │
-│           │         │                 │       │                 ││          │
-│           │         │ - title         │       │ - title         ││          │
-│           │         │ - raw_vtt       │       │ - content       ││          │
-│           │         │ - participants  │       │ - labels        ││          │
-│           │         └────────┬────────┘       └────────┬────────┘│          │
-│           │                  │                         │         │          │
-│           ▼                  ▼                         ▼         ▼          │
-│  ┌───────────────────────────────────────────────────────────────────┐      │
-│  │                    entity_references                              │      │
-│  │                                                                   │      │
-│  │  Links ALL sources to Jira tickets (or other entities)            │      │
-│  │                                                                   │      │
-│  │  source_type  │ source_id │ reference_type │ reference_id         │      │
-│  │  ─────────────┼───────────┼────────────────┼────────────────      │      │
-│  │  commit       │ uuid-1    │ jira_ticket    │ ONBOARD-11           │      │
-│  │  meeting      │ uuid-2    │ jira_ticket    │ ONBOARD-11           │      │
-│  │  confluence   │ uuid-3    │ jira_ticket    │ ONBOARD-11           │      │
-│  └───────────────────────────────────────────────────────────────────┘      │
-│           │                                                                  │
-│           ▼                                                                  │
-│  ┌─────────────────┐                                                        │
-│  │  jira_tickets   │◄────────────────────────────────────────────────────────
-│  │                 │                                                        │
-│  │ - issue_key     │  (e.g., ONBOARD-11)                                    │
-│  │ - summary       │                                                        │
-│  │ - status        │                                                        │
-│  │ - assignee      │                                                        │
-│  └─────────────────┘                                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+database/
+├── config/                        Django project settings for this sub-project
+│   ├── settings.py                DB connection, installed apps, SSL config for Render
+│   └── urls.py                    Minimal URL config (admin only)
+├── knowledge_base/                Main Django app
+│   ├── models.py                  All ORM models (13 tables + 2 AI-generated tables)
+│   ├── admin.py                   Admin registrations
+│   └── management/commands/
+│       └── ingest_data.py         Django management command for raw data ingestion
+├── scripts/                       Standalone pipeline scripts (see scripts/README.md)
+├── sql/
+│   └── 001_create_schema.sql      Base schema — run once on a fresh DB
+├── .env                           Credentials (never commit)
+├── .env.example                   Credential template
+├── manage.py                      Django CLI entry point
+└── requirements.txt               Python dependencies for this sub-project
 ```
 
 ---
 
 ## Tables
 
-### 1. employees
+The database has 13 tables across three groups.
 
-Stores team member information. Populated from Jira assignees, Git authors, and CSV imports.
+### Group 1 — Raw Data Sources
 
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `name` | VARCHAR(255) | No | Employee name (unique) |
-| `email` | VARCHAR(255) | Yes | Email address |
-| `role` | VARCHAR(100) | Yes | Job role (e.g., "Backend Developer") |
-| `department` | VARCHAR(100) | Yes | Department (e.g., "Engineering") |
-| `source` | VARCHAR(50) | Yes | Where data came from: jira, git, csv |
-| `jira_account_id` | VARCHAR(255) | Yes | Atlassian account ID |
-| `github_username` | VARCHAR(255) | Yes | GitHub username |
-| `is_active` | BOOLEAN | No | Active employee flag (default: true) |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
+| Table | What it stores | Ingested by |
+|---|---|---|
+| `employees` | Team member profiles | `ingest_data --employees` |
+| `git_commits` | Commit metadata (SHA, author, message, date) | `ingest_data --commits` / `extract_github.py` |
+| `git_commit_files` | Files changed per commit (1:N from git_commits) | Same as commits |
+| `meetings` | Meeting VTT transcripts + AI summaries | `ingest_data --meetings` |
+| `jira_tickets` | Jira issue details (status, assignee, story points) | `ingest_data --jira` / `extract_jira.py` |
+| `confluence_pages` | Confluence page content + drift fields | `ingest_data --confluence` / `extract_confluence.py` |
 
-**Indexes:** `name` (unique), `department`
+### Group 2 — Linking and Project Structure
 
-**Example:**
+| Table | What it stores |
+|---|---|
+| `entity_references` | Cross-source links: which commit/meeting/page mentions which ticket |
+| `projects` | Project metadata (name, owner, GitHub repo, Jira key, Confluence space) |
+| `project_entities` | Links any entity (commit/ticket/meeting/page) to a project |
+| `sprints` | Sprint definitions (number, name, dates, goal, status) |
+| `sprint_tickets` | Many-to-many: which tickets belong to which sprint |
+
+### Group 3 — AI-Generated Intelligence
+
+| Table | What it stores | Populated by |
+|---|---|---|
+| `decisions` | Decisions extracted from meetings, Confluence, Jira, commits | `extract_decisions.py` |
+| `decision_conflicts` | Detected conflicts between pairs of active decisions | `check_conflicts.py` |
+
+---
+
+## Schema Details
+
+### `employees`
+Team member profiles. Used by PeopleRegistry in the chatbot to resolve names and find contributors.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `name` | VARCHAR(255) UNIQUE | Canonical full name — all other tables link to this |
+| `email` | VARCHAR(255) | |
+| `role` | VARCHAR(100) | e.g. "Backend Developer", "Tech Lead" |
+| `department` | VARCHAR(100) | |
+| `source` | VARCHAR(50) | jira, git, csv |
+| `jira_account_id` | VARCHAR(255) | Atlassian account ID |
+| `github_username` | VARCHAR(255) | GitHub handle — indexed for 4-variant name lookup |
+| `is_active` | BOOLEAN | Filter on this before name lookups |
+
+---
+
+### `git_commits`
+One row per commit. `related_tickets` is a denormalised text field extracted at ingest time; the canonical link table is `entity_references`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `sha` | VARCHAR(40) UNIQUE | Full 40-char SHA |
+| `author_name` | VARCHAR(255) | Plain name string, matched to `employees.name` |
+| `author_email` | VARCHAR(255) | |
+| `commit_date` | TIMESTAMPTZ | |
+| `message` | TEXT | Full commit message — searched by drift/conflict scripts |
+| `related_tickets` | TEXT | Comma-separated ticket keys extracted from message |
+
+### `git_commit_files`
+Files touched in each commit. Used for "files most changed" analytics.
+
+| Column | Type | Notes |
+|---|---|---|
+| `commit_id` | UUID FK → git_commits | CASCADE delete |
+| `filename` | VARCHAR(500) | Full path |
+| `additions` | INTEGER | Lines added |
+| `deletions` | INTEGER | Lines deleted |
+| `status` | VARCHAR(50) | added / modified / deleted / renamed |
+
+---
+
+### `meetings`
+Meeting transcripts (VTT format) plus AI-generated analysis fields.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `title` | VARCHAR(500) | |
+| `meeting_date` | TIMESTAMPTZ | Can be null for some fixtures |
+| `raw_vtt_content` | TEXT | Full VTT transcript — source for decision extraction |
+| `summary` | TEXT | AI-generated by `summarize_meetings.py` |
+| `key_decisions` | TEXT | AI-extracted decisions (free text) |
+| `action_items` | TEXT | AI-extracted action items (free text) |
+| `participants` | TEXT | Speaker names parsed from VTT |
+| `duration_seconds` | INTEGER | |
+| `source_filename` | VARCHAR(255) | Original VTT filename |
+
+**Future fields** (not yet in schema): `meeting_type`, `sprint_id`, `summary_confidence`, `decisions_confidence`, `action_items_confidence`
+
+---
+
+### `jira_tickets`
+Flat Jira issue representation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `issue_key` | VARCHAR(50) UNIQUE | e.g. `ONBOARD-14` — used as `reference_id` in entity_references |
+| `issue_type` | VARCHAR(50) | Epic / Story / Bug / Task |
+| `summary` | VARCHAR(500) | Ticket title |
+| `description` | TEXT | Full description |
+| `status` | VARCHAR(50) | To Do / In Progress / Done / Blocked |
+| `priority` | VARCHAR(50) | Critical / High / Medium / Low |
+| `assignee` | VARCHAR(255) | Name string, matched to employees |
+| `reporter` | VARCHAR(255) | |
+| `created_date` | TIMESTAMPTZ | |
+| `resolved_date` | TIMESTAMPTZ | Null if not done |
+| `labels` | TEXT | Comma-separated |
+| `epic_link` | VARCHAR(50) | Parent epic key |
+| `story_points` | INTEGER | |
+| `comments` | TEXT | Raw comment block |
+
+---
+
+### `confluence_pages`
+Documentation pages. Includes drift-detection fields added in Change 7.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `title` | VARCHAR(500) | |
+| `space` | VARCHAR(255) | Confluence space key |
+| `author` | VARCHAR(255) | |
+| `content` | TEXT | Markdown content |
+| `labels` | TEXT[] | Array |
+| `page_created_date` | TIMESTAMPTZ | |
+| `page_updated_date` | TIMESTAMPTZ | Null for some fixtures — treated as high drift |
+| `drift_risk` | VARCHAR(10) | `low` / `medium` / `high` / `none` — set by `check_confluence_drift.py` |
+| `last_activity_date` | TIMESTAMPTZ | Most recent commit/ticket date referencing this page's topics |
+| `confluence_topics` | TEXT[] | 3–5 technical topics extracted by LLM once and cached |
+
+**SQL migration:** `migrate_add_confluence_drift_fields.sql`
+
+---
+
+### `entity_references`
+The core cross-source linking table. Every time a commit, meeting, or Confluence page mentions a Jira ticket key, a row is created here.
+
+| Column | Type | Notes |
+|---|---|---|
+| `source_type` | VARCHAR(50) | commit / meeting / confluence / jira_ticket |
+| `source_id` | UUID | ID of the source entity |
+| `reference_type` | VARCHAR(50) | Usually `jira_ticket`; sometimes `commit` |
+| `reference_id` | VARCHAR(100) | Ticket key (e.g. `ONBOARD-14`) or commit SHA |
+| `extraction_method` | VARCHAR(50) | regex / manual |
+
+**Unique constraint:** `(source_type, source_id, reference_type, reference_id)`
+
+**How provenance traversal uses this:**
 ```
-| name            | email                          | role              | department  |
-|-----------------|--------------------------------|-------------------|-------------|
-| Sarah Chen      | sarah.chen@meridiantech.com    | Tech Lead         | Engineering |
-| Marcus Thompson | marcus.thompson@meridiantech.com| Backend Developer | Engineering |
-| James O'Brien   | james.obrien@meridiantech.com  | Junior Developer  | Engineering |
-```
-
----
-
-### 2. git_commits
-
-Stores Git commit metadata. **One row per commit.**
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `sha` | VARCHAR(40) | No | Commit SHA (unique) |
-| `author_name` | VARCHAR(255) | No | Author's display name |
-| `author_email` | VARCHAR(255) | No | Author's email |
-| `commit_date` | TIMESTAMP | No | When commit was made |
-| `message` | TEXT | No | Full commit message |
-| `related_tickets` | TEXT | Yes | Extracted ticket IDs (e.g., "ONBOARD-11, ONBOARD-12") |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `sha` (unique), `author_email`, `commit_date`
-
----
-
-### 3. git_commit_files
-
-Stores files changed in each commit. **Multiple rows per commit.**
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `commit_id` | UUID | No | Foreign key → git_commits |
-| `filename` | VARCHAR(500) | No | File path |
-| `additions` | INTEGER | No | Lines added |
-| `deletions` | INTEGER | No | Lines deleted |
-| `status` | VARCHAR(50) | No | added, modified, deleted, renamed |
-| `created_at` | TIMESTAMP | No | Record creation time |
-
-**Indexes:** `commit_id`, `filename`  
-**Foreign Key:** `commit_id` → `git_commits(id)` ON DELETE CASCADE
-
----
-
-### 4. meetings
-
-Stores meeting transcripts and AI-generated analysis.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `title` | VARCHAR(500) | Yes | Meeting title |
-| `meeting_date` | TIMESTAMP | Yes | When meeting occurred |
-| `raw_vtt_content` | TEXT | No | Full VTT transcript |
-| `summary` | TEXT | Yes | AI-generated summary (future) |
-| `key_decisions` | TEXT | Yes | JSON array of decisions (future) |
-| `action_items` | TEXT | Yes | JSON array of action items (future) |
-| `participants` | TEXT | Yes | JSON array of speaker names |
-| `duration_seconds` | INTEGER | Yes | Meeting length in seconds |
-| `source_filename` | VARCHAR(255) | Yes | Original VTT filename |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `meeting_date`
-
----
-
-### 5. jira_tickets
-
-Stores Jira ticket information.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `issue_key` | VARCHAR(50) | No | Jira key, e.g., "ONBOARD-11" (unique) |
-| `issue_type` | VARCHAR(50) | No | Epic, Task, Bug, Story, etc. |
-| `summary` | VARCHAR(500) | No | Ticket title |
-| `description` | TEXT | Yes | Full description |
-| `status` | VARCHAR(50) | No | To Do, In Progress, Done, etc. |
-| `priority` | VARCHAR(50) | Yes | High, Medium, Low, etc. |
-| `assignee` | VARCHAR(255) | Yes | Assigned person |
-| `reporter` | VARCHAR(255) | Yes | Who created the ticket |
-| `created_date` | TIMESTAMP | Yes | Ticket creation date |
-| `updated_date` | TIMESTAMP | Yes | Last update date |
-| `resolved_date` | TIMESTAMP | Yes | Resolution date |
-| `labels` | TEXT | Yes | Comma-separated labels |
-| `epic_link` | VARCHAR(50) | Yes | Parent epic issue key |
-| `sprint` | VARCHAR(100) | Yes | Sprint name (text field) |
-| `story_points` | INTEGER | Yes | Story points estimate |
-| `comments` | TEXT | Yes | JSON array of comments |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `issue_key` (unique), `status`, `assignee`, `epic_link`, `created_date`
-
----
-
-### 6. confluence_pages
-
-Stores Confluence documentation pages (content as Markdown).
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `title` | VARCHAR(500) | No | Page title |
-| `space` | VARCHAR(255) | Yes | Confluence space key |
-| `author` | VARCHAR(255) | Yes | Page author name |
-| `content` | TEXT | No | Page content (Markdown) |
-| `labels` | TEXT[] | Yes | Array of labels |
-| `version` | INTEGER | No | Page version number |
-| `page_created_date` | TIMESTAMP | Yes | Page creation date |
-| `page_updated_date` | TIMESTAMP | Yes | Page last update date |
-| `source_filename` | VARCHAR(255) | Yes | Source filename |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `space`, `author`, `labels` (GIN)
-
----
-
-### 7. entity_references
-
-Links entities across different sources. **The core linking table.**
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `source_type` | VARCHAR(50) | No | commit, meeting, confluence, jira_ticket |
-| `source_id` | UUID | No | ID of the source entity |
-| `reference_type` | VARCHAR(50) | No | Type of reference (usually "jira_ticket") |
-| `reference_id` | VARCHAR(100) | No | Referenced entity ID (e.g., "ONBOARD-11") |
-| `extraction_method` | VARCHAR(50) | Yes | How it was extracted |
-| `created_at` | TIMESTAMP | No | Record creation time |
-
-**Indexes:** `(source_type, source_id)`, `(reference_type, reference_id)`  
-**Unique Constraint:** `(source_type, source_id, reference_type, reference_id)`
-
----
-
-### 8. projects
-
-Groups related work under a single project.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `name` | VARCHAR(255) | No | Project name |
-| `description` | TEXT | Yes | Project description |
-| `status` | VARCHAR(50) | No | active, completed, on_hold |
-| `epic_key` | VARCHAR(50) | Yes | Main epic issue key |
-| `jira_project_key` | VARCHAR(20) | Yes | Jira project key (e.g., "ONBOARD") |
-| `github_repo` | VARCHAR(255) | Yes | GitHub repository |
-| `confluence_space_key` | VARCHAR(50) | Yes | Confluence space |
-| `start_date` | DATE | Yes | Project start date |
-| `target_end_date` | DATE | Yes | Target completion date |
-| `actual_end_date` | DATE | Yes | Actual completion date |
-| `owner` | VARCHAR(255) | Yes | Project owner |
-| `team_members` | TEXT | Yes | JSON array of team members |
-| `tags` | TEXT[] | Yes | Array of tags |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `status`, `epic_key`, `github_repo`, `tags` (GIN)
-
----
-
-### 9. project_entities
-
-Links specific entities to projects.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `project_id` | UUID | No | Foreign key → projects |
-| `entity_type` | VARCHAR(50) | No | commit, meeting, jira_ticket, etc. |
-| `entity_id` | UUID | No | ID of the linked entity |
-| `added_manually` | BOOLEAN | No | Was this manually added? |
-| `created_at` | TIMESTAMP | No | Record creation time |
-
-**Foreign Key:** `project_id` → `projects(id)` ON DELETE CASCADE
-
----
-
-### 10. sprints
-
-Stores sprint information linked to projects.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `sprint_number` | INTEGER | No | Sprint number (1, 2, 3...) |
-| `name` | VARCHAR(255) | No | Sprint name (e.g., "Sprint 1 - Foundation") |
-| `start_date` | DATE | No | Sprint start date |
-| `end_date` | DATE | No | Sprint end date |
-| `goal` | TEXT | Yes | Sprint goal/objective |
-| `project_id` | UUID | Yes | Foreign key → projects |
-| `status` | VARCHAR(50) | No | planned, active, completed |
-| `created_at` | TIMESTAMP | No | Record creation time |
-| `updated_at` | TIMESTAMP | No | Record last update time |
-
-**Indexes:** `project_id`, `status`, `start_date`  
-**Foreign Key:** `project_id` → `projects(id)` ON DELETE CASCADE  
-**Unique Constraint:** `(sprint_number, project_id)`
-
-**Example:**
-```
-| sprint_number | name                    | start_date | end_date   | status    |
-|---------------|-------------------------|------------|------------|-----------|
-| 1             | Sprint 1 - Foundation   | 2026-01-06 | 2026-01-17 | completed |
-| 2             | Sprint 2 - Core Features| 2026-01-20 | 2026-01-31 | completed |
+decision.source_id → meetings.id
+  → entity_references WHERE source_type='meeting' AND source_id=meeting.id
+      → jira_tickets (via reference_id = issue_key)
+          → entity_references WHERE source_type='commit' AND reference_id=issue_key
+              → git_commits
 ```
 
 ---
 
-### 11. sprint_tickets
+### `projects`
 
-Links sprints to Jira tickets.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | UUID | No | Primary key |
-| `sprint_id` | UUID | No | Foreign key → sprints |
-| `ticket_id` | UUID | No | Foreign key → jira_tickets |
-| `added_date` | DATE | Yes | When ticket was added to sprint |
-| `created_at` | TIMESTAMP | No | Record creation time |
-
-**Indexes:** `sprint_id`, `ticket_id`  
-**Foreign Keys:** 
-- `sprint_id` → `sprints(id)` ON DELETE CASCADE
-- `ticket_id` → `jira_tickets(id)` ON DELETE CASCADE  
-**Unique Constraint:** `(sprint_id, ticket_id)`
+| Column | Type | Notes |
+|---|---|---|
+| `name` | VARCHAR(255) | |
+| `status` | VARCHAR(50) | active / completed / on_hold / cancelled |
+| `epic_key` | VARCHAR(50) | Main epic |
+| `jira_project_key` | VARCHAR(20) | e.g. `ONBOARD` |
+| `github_repo` | VARCHAR(255) | |
+| `confluence_space_key` | VARCHAR(50) | |
+| `start_date` | DATE | |
+| `target_end_date` | DATE | |
+| `actual_end_date` | DATE | Null until project completes |
+| `owner` | VARCHAR(255) | |
+| `tags` | TEXT[] | GIN indexed |
 
 ---
 
-## How Entity References Work
+### `sprints`
 
-The `entity_references` table automatically links data across sources when ticket IDs are mentioned.
+| Column | Type | Notes |
+|---|---|---|
+| `sprint_number` | INTEGER | 1, 2, 3… unique per project |
+| `name` | VARCHAR(255) | e.g. "Sprint 1 - Foundation" |
+| `start_date` | DATE | |
+| `end_date` | DATE | |
+| `goal` | TEXT | Sprint objective |
+| `project_id` | UUID FK → projects | |
+| `status` | VARCHAR(50) | planned / active / completed |
 
-**Example Flow:**
+**Unique constraint:** `(sprint_number, project_id)`
+
+**Future fields** (not yet in schema): `summary_text`, `summary_generated_at`, `summary_confidence`
+
+---
+
+### `sprint_tickets`
+Many-to-many join between sprints and jira_tickets.
+
+| Column | Type | Notes |
+|---|---|---|
+| `sprint_id` | UUID FK → sprints | |
+| `ticket_id` | UUID FK → jira_tickets | |
+| `added_date` | DATE | When ticket was added to sprint — needed for scope creep detection, currently not populated during ingest |
+
+---
+
+### `decisions`
+The unified decision timeline. Populated by `extract_decisions.py` using Groq LLM.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `title` | VARCHAR(500) | |
+| `description` | TEXT | |
+| `decision_date` | DATE | |
+| `rationale` | TEXT | The "why" |
+| `alternatives_considered` | TEXT | |
+| `impact` | TEXT | |
+| `decided_by` | VARCHAR(255)[] | Array of person names |
+| `source_type` | VARCHAR(50) | meeting / confluence / jira / git_commit |
+| `source_id` | UUID | FK to the originating source |
+| `source_title` | VARCHAR(500) | Display name for the source |
+| `related_tickets` | VARCHAR(50)[] | Jira keys the LLM associated with this decision |
+| `related_decisions` | UUID[] | Other decisions referenced |
+| `category` | VARCHAR(100) | architecture / technology / process / design / infrastructure / security / other |
+| `tags` | TEXT[] | Technology/concept keywords — used by drift and conflict detection |
+| `status` | VARCHAR(50) | active / superseded / reversed / proposed / duplicate |
+| `superseded_by` | UUID FK → decisions | Points to the replacing decision |
+| `supersedes` | UUID FK → decisions | Points to the decision this replaced |
+| `confidence_score` | FLOAT | 0–1, set by the LLM at extraction time |
+| `last_reinforced_at` | TIMESTAMPTZ | Most recent commit/ticket date mentioning this decision's tags — set by `check_drift.py` |
+| `drift_risk` | VARCHAR(10) | low / medium / high — set by `check_drift.py` |
+
+**SQL migrations applied:**
+- Base columns in `001_create_schema.sql`
+- Drift fields: `migrate_add_drift_fields.sql`
+
+**Current state (as of 2026-05):** 44 decisions, 43 active, 1 superseded (Material UI → Tailwind CSS)
+
+---
+
+### `decision_conflicts`
+Conflicts between pairs of active decisions. Populated by `check_conflicts.py`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `decision_a_id` | UUID FK → decisions | Always the lower UUID (normalized for unique constraint) |
+| `decision_b_id` | UUID FK → decisions | |
+| `conflict_type` | VARCHAR(50) | direct / indirect / potential |
+| `explanation` | TEXT | LLM-generated explanation |
+| `severity` | VARCHAR(10) | low / medium / high |
+| `detected_at` | TIMESTAMPTZ | |
+
+**SQL migration:** `migrate_add_conflicts_table.sql`
+
+**Current state:** 2 conflicts — [HIGH] GitHub Actions ↔ AWS deployment, [MEDIUM] Simplify Employee API ↔ Show all employees to managers
+
+---
+
+## SQL Migrations
+
+All migrations have already been applied to the Render DB. Do not re-run them.
+
+| File | Status | What it adds |
+|---|---|---|
+| `sql/001_create_schema.sql` | Applied | Full base schema (all tables except decisions drift + conflicts + confluence drift) |
+| `scripts/migrate_add_drift_fields.sql` | Applied | `last_reinforced_at`, `drift_risk` on `decisions` |
+| `scripts/migrate_add_conflicts_table.sql` | Applied | `decision_conflicts` table |
+| `scripts/migrate_add_confluence_drift_fields.sql` | Applied | `drift_risk`, `last_activity_date`, `confluence_topics` on `confluence_pages` |
+
+If the DB is reset and you need to rebuild from scratch:
+```bash
+psql $DATABASE_URL -f sql/001_create_schema.sql
+psql $DATABASE_URL -f scripts/migrate_add_drift_fields.sql
+psql $DATABASE_URL -f scripts/migrate_add_conflicts_table.sql
+psql $DATABASE_URL -f scripts/migrate_add_confluence_drift_fields.sql
+```
+
+---
+
+## Data Ingestion Order
+
+Run in this order — some tables depend on others.
 
 ```
-Commit message: "feat: add login page - ONBOARD-15"
-                                         │
-                                         ▼
-                            Script extracts "ONBOARD-15"
-                                         │
-                                         ▼
-                            Creates entity_reference:
-                            ┌─────────────────────────────────┐
-                            │ source_type: commit             │
-                            │ source_id: (commit UUID)        │
-                            │ reference_type: jira_ticket     │
-                            │ reference_id: ONBOARD-15        │
-                            └─────────────────────────────────┘
+1. employees        (no dependencies)
+2. projects         (no dependencies)
+3. jira_tickets     (no dependencies)
+4. sprints          (requires: projects)
+5. sprint_tickets   (requires: sprints + jira_tickets)
+6. git_commits      (no dependencies)
+7. meetings         (no dependencies)
+8. confluence_pages (no dependencies)
 ```
 
-**Query: "Show everything related to ONBOARD-15"**
+Using the Django management command:
+```bash
+cd /Users/Masters/Projects/Onboarding_AI/database
+python3.12 manage.py ingest_data --employees ../sync_docs/employees.csv
+python3.12 manage.py ingest_data --projects  ../sync_docs/projects.csv
+python3.12 manage.py ingest_data --jira      ../sync_docs/jira_tickets.csv
+python3.12 manage.py ingest_data --sprints   ../sync_docs/sprints.csv
+python3.12 manage.py ingest_data --sprint-tickets ../sync_docs/sprint_tickets.csv
+python3.12 manage.py ingest_data --commits   ../sync_docs/git_commits.json
+# Meetings — one VTT file at a time:
+python3.12 manage.py ingest_data --meetings  ../sync_docs/sprint1_meeting1_planning.vtt
+python3.12 manage.py ingest_data --meetings  ../sync_docs/sprint1_meeting2_midsprint.vtt
+python3.12 manage.py ingest_data --meetings  ../sync_docs/sprint2_meeting1_planning.vtt
+python3.12 manage.py ingest_data --meetings  ../sync_docs/sprint2_meeting2_midsprint.vtt
+python3.12 manage.py ingest_data --meetings  ../sync_docs/2026-01-14_standup.vtt
+# Confluence — one Markdown file at a time:
+python3.12 manage.py ingest_data --confluence ../sync_docs/01_project_overview.md
+python3.12 manage.py ingest_data --confluence ../sync_docs/02_technical_architecture.md
+python3.12 manage.py ingest_data --confluence ../sync_docs/03_api_documentation.md
+python3.12 manage.py ingest_data --confluence ../sync_docs/04_setup_guide.md
+python3.12 manage.py ingest_data --confluence ../sync_docs/05_new_employee_first_steps.md
+python3.12 manage.py ingest_data --confluence ../sync_docs/06_sprint1_retrospective.md
+```
+
+---
+
+## Database View: unified_timeline
+
+Combines all raw source tables into one chronological view.
 
 ```sql
-SELECT source_type, source_id 
-FROM entity_references 
-WHERE reference_id = 'ONBOARD-15';
+SELECT * FROM unified_timeline ORDER BY event_date DESC LIMIT 20;
 ```
 
-Returns commits, meetings, and confluence pages that mention this ticket.
+Columns: `entity_type`, `entity_id`, `event_date`, `title`, `actor`, `context`
 
 ---
 
-## How Sprints Work
+## Local Setup
 
-Sprints are linked to projects and contain multiple tickets via the `sprint_tickets` table.
+```bash
+cd /Users/Masters/Projects/Onboarding_AI/database
+cp .env.example .env   # fill in credentials
 
-```
-┌─────────────┐         ┌─────────────┐         ┌───────────────┐
-│  projects   │────────▶│   sprints   │────────▶│ sprint_tickets│
-│             │   1:N   │             │   1:N   │               │
-│ Employee    │         │ Sprint 1    │         │ ONBOARD-11    │
-│ Onboarding  │         │ Sprint 2    │         │ ONBOARD-12    │
-│ Portal      │         │             │         │ ONBOARD-13    │
-└─────────────┘         └─────────────┘         └───────┬───────┘
-                                                        │
-                                                        ▼
-                                                ┌───────────────┐
-                                                │ jira_tickets  │
-                                                │               │
-                                                │ ONBOARD-11    │
-                                                │ ONBOARD-12    │
-                                                │ ONBOARD-13    │
-                                                └───────────────┘
+# Verify connection
+/Users/Masters/Projects/Onboarding_AI/venv/bin/python3.12 manage.py check
+
+# Django shell for ad-hoc queries
+/Users/Masters/Projects/Onboarding_AI/venv/bin/python3.12 manage.py shell
 ```
 
-**Query: "Show all tickets in Sprint 1"**
+Do **not** run `python manage.py migrate` to create the knowledge base tables — all schema is managed via the SQL files above. Running `migrate` only sets up Django's internal auth/session tables.
 
-```sql
-SELECT j.issue_key, j.summary, j.status, j.assignee
-FROM sprints s
-JOIN sprint_tickets st ON s.id = st.sprint_id
-JOIN jira_tickets j ON st.ticket_id = j.id
-WHERE s.sprint_number = 1
-ORDER BY j.issue_key;
+---
+
+## Connection Details (Render)
+
+| Field | Value |
+|---|---|
+| Host | `dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com` |
+| Port | 5432 |
+| Database | `project_knowledge` |
+| User | `onboarding_user` |
+
+```bash
+psql "postgresql://onboarding_user:PASSWORD@dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com/project_knowledge"
+```
+
+**Warning:** Render free tier suspends after 90 days of inactivity. Run a query to wake it before any demo.
+
+---
+
+## Environment Variables
+
+```
+# Required
+DB_NAME=project_knowledge
+DB_USER=onboarding_user
+DB_PASSWORD=<password>
+DB_HOST=dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com
+DB_PORT=5432
+SECRET_KEY=<django-secret-key>
+DEBUG=True
+
+# LLM (for scripts)
+GROQ_API_KEY=<key>          # 100k tokens/day free tier
+
+# External APIs (for live extraction scripts)
+GITHUB_TOKEN=<token>
+GITHUB_OWNER=<org>
+GITHUB_REPO=<repo>
+JIRA_DOMAIN=<domain>.atlassian.net
+JIRA_EMAIL=<email>
+JIRA_API_TOKEN=<token>
+JIRA_PROJECT_KEY=ONBOARD
+CONFLUENCE_DOMAIN=<domain>.atlassian.net
+CONFLUENCE_EMAIL=<email>
+CONFLUENCE_API_TOKEN=<token>
+CONFLUENCE_SPACE_ID=<id>
 ```
 
 ---
 
 ## Common Queries
 
-### Count All Records
-
-```sql
-SELECT 'employees' as tbl, COUNT(*) FROM employees
-UNION ALL SELECT 'commits', COUNT(*) FROM git_commits
-UNION ALL SELECT 'files', COUNT(*) FROM git_commit_files
-UNION ALL SELECT 'tickets', COUNT(*) FROM jira_tickets
-UNION ALL SELECT 'pages', COUNT(*) FROM confluence_pages
-UNION ALL SELECT 'meetings', COUNT(*) FROM meetings
-UNION ALL SELECT 'sprints', COUNT(*) FROM sprints
-UNION ALL SELECT 'references', COUNT(*) FROM entity_references;
-```
-
-### Find Everything Related to a Ticket
-
-```sql
-SELECT source_type, source_id, extraction_method
-FROM entity_references
-WHERE reference_id = 'ONBOARD-11';
-```
-
-### Get Commits for a Ticket
-
-```sql
-SELECT c.sha, c.author_name, c.message, c.commit_date
-FROM git_commits c
-JOIN entity_references er ON c.id = er.source_id
-WHERE er.source_type = 'commit'
-  AND er.reference_id = 'ONBOARD-11'
-ORDER BY c.commit_date;
-```
-
-### View Sprint with Tickets
-
-```sql
-SELECT s.name, s.start_date, s.end_date, 
-       j.issue_key, j.summary, j.status, j.assignee
-FROM sprints s
-JOIN sprint_tickets st ON s.id = st.sprint_id
-JOIN jira_tickets j ON st.ticket_id = j.id
-ORDER BY s.sprint_number, j.issue_key;
-```
-
-### Get Employee Activity
-
-```sql
--- Commits by employee
-SELECT c.sha, c.message, c.commit_date
-FROM git_commits c
-JOIN employees e ON c.author_email = e.email
-WHERE e.name = 'Marcus Thompson'
-ORDER BY c.commit_date DESC;
-
--- Tickets assigned to employee
-SELECT issue_key, summary, status
-FROM jira_tickets
-WHERE assignee = 'Marcus Thompson';
-```
-
-### View Project Timeline
-
-```sql
-SELECT * FROM unified_timeline
-ORDER BY event_date DESC
-LIMIT 20;
-```
-
----
-
-## Django Models
-
-### Key Models
-
 ```python
+# Django shell — from database/
 from knowledge_base.models import *
 
-# Employees
-Employee.objects.all()
-Employee.objects.filter(department='Engineering')
+# Check record counts
+print(Decision.objects.count())       # 44
+print(DecisionConflict.objects.count()) # 2
 
-# Commits
-GitCommit.objects.filter(author_name='Marcus Thompson')
-commit = GitCommit.objects.first()
-commit.files.all()  # Get files changed
+# Decisions by drift risk
+Decision.objects.filter(drift_risk='high').values('title', 'last_reinforced_at')
 
-# Tickets
-JiraTicket.objects.filter(status='Done')
-JiraTicket.objects.filter(assignee='Sarah Chen')
+# Commits by an author
+GitCommit.objects.filter(author_name='Marcus Thompson').order_by('-commit_date')
 
-# Sprints
-Sprint.objects.all()
-sprint = Sprint.objects.get(sprint_number=1)
-for st in sprint.sprint_tickets.all():
-    print(st.ticket.issue_key)
+# All tickets in a sprint
+Sprint.objects.get(sprint_number=1).sprint_tickets.select_related('ticket').all()
 
-# Entity References
-EntityReference.objects.filter(reference_id='ONBOARD-11')
+# Provenance: everything linked to a ticket
+EntityReference.objects.filter(reference_id='ONBOARD-14')
 ```
 
----
-
-## Database Views
-
-### unified_timeline
-
-Combines all entities into a single chronological view.
-
-```sql
-SELECT * FROM unified_timeline ORDER BY event_date DESC LIMIT 10;
-```
-
-| Column | Description |
-|--------|-------------|
-| `entity_type` | commit, meeting, jira_ticket, confluence |
-| `entity_id` | UUID of the entity |
-| `event_date` | When the event occurred |
-| `title` | Title/summary |
-| `actor` | Person responsible |
-| `context` | Additional context |
-
----
-
-## Data Ingestion
-
-### Available Commands
-
+For full provenance output:
 ```bash
-python manage.py ingest_data --employees /path/to/employees.csv
-python manage.py ingest_data --projects /path/to/projects.csv
-python manage.py ingest_data --jira /path/to/jira_tickets.csv
-python manage.py ingest_data --sprints /path/to/sprints.csv
-python manage.py ingest_data --sprint-tickets /path/to/sprint_tickets.csv
-python manage.py ingest_data --commits /path/to/git_commits.json
-python manage.py ingest_data --meetings /path/to/meeting.vtt
-python manage.py ingest_data --confluence /path/to/page.md
+/Users/Masters/Projects/Onboarding_AI/venv/bin/python3.12 scripts/provenance.py --decision "JWT"
 ```
 
-### Ingestion Order (Important!)
-
-```
-1. employees      (no dependencies)
-2. projects       (no dependencies)
-3. jira tickets   (no dependencies)
-4. sprints        (requires projects)
-5. sprint-tickets (requires sprints + tickets)
-6. commits        (no dependencies)
-7. meetings       (no dependencies)
-8. confluence     (no dependencies)
-```
-
----
-
-## Connection Details
-
-### Render Cloud (Production)
-
-| Field | Value |
-|-------|-------|
-| Host | `dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com` |
-| Port | `5432` |
-| Database | `project_knowledge` |
-| Username | `onboarding_user` |
-
-### Connection String
-
-```
-postgresql://onboarding_user:PASSWORD@dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com/project_knowledge
-```
-
-### Connect via psql
-
-```bash
-psql "postgresql://onboarding_user:PASSWORD@dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com/project_knowledge"
-```
-
-### Useful psql Commands
-
-| Command | Description |
-|---------|-------------|
-| `\dt` | List all tables |
-| `\d tablename` | Describe table |
-| `\dv` | List views |
-| `\q` | Quit |
-
----
-
-## Environment Variables
-
-```bash
-# Database (Render)
-DB_NAME=project_knowledge
-DB_USER=onboarding_user
-DB_PASSWORD=your-password
-DB_HOST=dpg-d6evhe8gjchc73ac2mmg-a.oregon-postgres.render.com
-DB_PORT=5432
-
-# Django
-DEBUG=True
-SECRET_KEY=your-secret-key
-
-# GitHub (for API extraction)
-GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-GITHUB_OWNER=your-org
-GITHUB_REPO=your-repo
-
-# Jira & Confluence
-JIRA_DOMAIN=your-domain.atlassian.net
-JIRA_EMAIL=your-email
-JIRA_API_TOKEN=your-token
-JIRA_PROJECT_KEY=ONBOARD
-CONFLUENCE_SPACE_KEY=ONBOARD
-```
-
----
-
-## Quick Reference
-
-### Start Server
-```bash
-cd ~/Desktop/Onboarding_AI/database
-source ../venv/bin/activate
-python manage.py runserver
-```
-
-### Admin Panel
-http://127.0.0.1:8000/admin/
-
-### Django Shell
-```bash
-python manage.py shell
-```
-
-### Reset Database
-```sql
-DROP VIEW IF EXISTS unified_timeline CASCADE;
-DROP TABLE IF EXISTS sprint_tickets, sprints, project_entities, projects,
-    entity_references, git_commit_files, git_commits, meetings,
-    jira_tickets, confluence_pages, employees CASCADE;
-```
-
----
-
-*Last updated: February 2026*
+See `scripts/README.md` for all available scripts and their flags.

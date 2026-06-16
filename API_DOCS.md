@@ -2,13 +2,15 @@
 
 Base URL: `http://127.0.0.1:8000/api`
 
+Interactive docs (Swagger): `http://127.0.0.1:8000/api/docs/`
+
 ---
 
 ## Starting the Server
 
 ```bash
-cd C:\Users\preet\Projects\ex-cdi
-venv\Scripts\activate
+cd /Users/Masters/Projects/Onboarding_AI
+source venv/bin/activate
 python manage.py runserver
 ```
 
@@ -20,8 +22,8 @@ There are two `.env` files in this project — only edit the one at the **projec
 
 | File | Used by | Edit this? |
 |------|---------|-----------|
-| `/ex-cdi/.env` | Django API server (`manage.py runserver`) | YES — add all tokens here |
-| `/ex-cdi/database/.env` | Old manual scripts (`extract_github.py` etc.) | No — only needed if running scripts manually |
+| `/Onboarding_AI/.env` | Django API server (`manage.py runserver`) | YES — add all tokens here |
+| `/Onboarding_AI/database/.env` | Database scripts (`database/scripts/`) | Only if running scripts directly |
 
 Restart the server after any changes to `.env`.
 
@@ -30,16 +32,16 @@ Restart the server after any changes to `.env`.
 SECRET_KEY=your_django_secret_key
 DEBUG=True
 
-# Database
+# Database (Render PostgreSQL)
 DB_NAME=project_knowledge
 DB_USER=onboarding_user
 DB_PASSWORD=your_db_password
-DB_HOST=your_db_host
+DB_HOST=your_render_host.render.com
 DB_PORT=5432
 
-# Chatbot (AI)
-# Get key: bytez.com → API Keys
-BYTEZ_API_KEY=your_bytez_api_key
+# Chatbot AI (Groq)
+# Get key: console.groq.com → API Keys
+GROQ_API_KEY=your_groq_api_key
 
 # GitHub
 # Get token: GitHub → Settings → Developer Settings → Personal Access Tokens → Generate new token (needs repo scope)
@@ -71,229 +73,18 @@ CONFLUENCE_SPACE_KEY=ONBOARD           # key shown in the Confluence URL
 
 | Category | What it does |
 |----------|-------------|
-| **Read APIs** | Fetch data already stored in the database |
-| **Ingest APIs** | Pull data from external sources (GitHub, Jira, Confluence) into the database |
-| **Delete API** | Remove any record from the database |
-
----
-
-## Read APIs
-
-These return data already in the database. All are GET requests, no body needed.
-
----
-
-### Test
-
-| Method | URL |
-|--------|-----|
-| GET | `/api/test/` |
-
-**Response:**
-```json
-{ "message": "hello preety" }
-```
-
----
-
-### Commits
-
-#### List all commits
-| Method | URL |
-|--------|-----|
-| GET | `/api/commits/` |
-
-**Response:** Array of commit objects with files attached.
-
-#### Get a single commit
-| Method | URL |
-|--------|-----|
-| GET | `/api/commits/<sha>/` |
-
-**URL param:** `sha` — the commit SHA (copy from the list response)
-
----
-
-### Jira Tickets
-
-#### List all tickets
-| Method | URL |
-|--------|-----|
-| GET | `/api/tickets/` |
-
-#### Get a single ticket
-| Method | URL |
-|--------|-----|
-| GET | `/api/tickets/<issue_key>/` |
-
-**URL param:** `issue_key` — e.g. `PAY-221`
-
-#### Get a ticket with all linked data
-| Method | URL |
-|--------|-----|
-| GET | `/api/tickets/<issue_key>/context/` |
-
-**Response includes:** the ticket + any linked commits, Confluence pages, and meetings via entity references.
-
----
-
-### Confluence Pages
-
-#### List all pages
-| Method | URL |
-|--------|-----|
-| GET | `/api/pages/` |
-
-Returns lightweight list (no full content body).
-
-#### Get a single page
-| Method | URL |
-|--------|-----|
-| GET | `/api/pages/<uuid>/` |
-
-**URL param:** `uuid` — copy from the list response
-**Response includes:** full page content.
-
----
-
-### Meetings
-
-#### List all meetings
-| Method | URL |
-|--------|-----|
-| GET | `/api/meetings/` |
-
-Returns metadata only (no raw VTT transcript).
-
-#### Get a single meeting
-| Method | URL |
-|--------|-----|
-| GET | `/api/meetings/<uuid>/` |
-
-**URL param:** `uuid` — copy from the list response
-**Response includes:** everything + `raw_vtt_content` (full transcript).
-
----
-
-### Projects
-
-#### List all projects
-| Method | URL |
-|--------|-----|
-| GET | `/api/projects/` |
-
-#### Get a single project
-| Method | URL |
-|--------|-----|
-| GET | `/api/projects/<uuid>/` |
-
-**URL param:** `uuid` — copy from the list response
-
----
-
-### Employees
-
-#### List all employees
-| Method | URL |
-|--------|-----|
-| GET | `/api/employees/` |
-
-#### Get a single employee
-| Method | URL |
-|--------|-----|
-| GET | `/api/employees/<uuid>/` |
-
-**URL param:** `uuid` — copy from the list response
-
----
-
-### Sprints
-
-#### List all sprints
-| Method | URL |
-|--------|-----|
-| GET | `/api/sprints/` |
-
-#### Get a single sprint
-| Method | URL |
-|--------|-----|
-| GET | `/api/sprints/<sprint_number>/` |
-
-**URL param:** `sprint_number` — the sprint number e.g. `1`, `2`, `3`
-
-#### Get all tickets in a sprint
-| Method | URL |
-|--------|-----|
-| GET | `/api/sprints/<sprint_number>/tickets/` |
-
-**Response includes:** all tickets with `is_completed`, `teammates`, and summary counts (total, completed, pending).
-
-#### Get all meetings during a sprint
-| Method | URL |
-|--------|-----|
-| GET | `/api/sprints/<sprint_number>/meetings/` |
-
-**Response includes:** all meetings whose date falls within the sprint's start and end dates.
-
----
-
-### Decisions
-
-#### List all decisions
-| Method | URL |
-|--------|-----|
-| GET | `/api/decisions/` |
-
-**Optional query params:**
-- `?category=architecture` — filter by category
-- `?source_type=meeting` — filter by source (meeting, confluence, jira, git_commit)
-
-#### Get a single decision
-| Method | URL |
-|--------|-----|
-| GET | `/api/decisions/<uuid>/` |
-
-**URL param:** `uuid` — copy from the list response
-
----
-
-### Search
-
-| Method | URL |
-|--------|-----|
-| GET | `/api/search/?q=<query>` |
-
-**Query param:** `q` — the search term (add in Postman's Params tab)
-
-Searches across: commit messages, ticket summaries/descriptions, page titles/content, meeting titles.
-
-**Response:**
-```json
-{
-    "query": "login",
-    "commits": [...],
-    "tickets": [...],
-    "pages": [...],
-    "meetings": [...]
-}
-```
+| **Chat** | Send a natural-language question to the AI chatbot |
+| **Read** | Fetch data already stored in the database |
+| **Ingest** | Pull data from external sources into the database |
+| **Delete** | Remove any record from the database |
 
 ---
 
 ## Chat API
 
-The AI chatbot endpoint. Sends a natural-language question to the onboarding assistant and gets a response.
+The AI chatbot endpoint. Sends a natural-language question to the onboarding assistant and gets a structured response.
 
-| Method | URL |
-|--------|-----|
-| POST | `/api/chat/` |
-
-**How to send in Postman:**
-1. Method: `POST`
-2. URL: `http://127.0.0.1:8000/api/chat/`
-3. Go to **Body** tab → select **raw** → change dropdown to **JSON**
-4. Type the body (do not copy-paste — use straight quotes)
-5. Click Send
+### POST `/api/chat/`
 
 **Request body — first message:**
 ```json
@@ -302,7 +93,7 @@ The AI chatbot endpoint. Sends a natural-language question to the onboarding ass
 }
 ```
 
-**Request body — follow-up message (continue the conversation):**
+**Request body — follow-up (continue the conversation):**
 ```json
 {
     "query": "Who made that decision?",
@@ -327,118 +118,320 @@ Pass the `conversation_id` from the previous response to keep the bot in the sam
 | Field | Description |
 |-------|-------------|
 | `answer` | The AI's response text |
-| `intent` | What the bot understood you were asking (decision_query, person_query, ticket_query, etc.) |
-| `confidence` | How confident the intent classifier was (0–1) |
+| `intent` | What the bot understood (decision_query, person_query, ticket_query, etc.) |
+| `confidence` | Intent classifier confidence (0–1) |
 | `sources` | Which database records were used to generate the answer |
 | `conversation_id` | Copy this into your next request to continue the conversation |
 | `turn` | Which turn number this is in the conversation |
 
-**Requires in `.env`:** `BYTEZ_API_KEY`
+**Requires in `.env`:** `GROQ_API_KEY`
 
 **Note:** Conversation history is stored in memory only. If the server restarts, all conversation history is lost and a new `conversation_id` must be used.
+
+### POST `/api/query/`
+
+Alias for `/api/chat/` — same request/response shape. Used by the Chrome extension for compatibility.
+
+---
+
+## Auth
+
+### POST `/api/register/`
+
+Creates or updates an Employee record.
+
+**Request body:**
+```json
+{
+    "name": "Alice Chen",
+    "email": "alice@company.com",
+    "role": "Backend Engineer",
+    "department": "Engineering"
+}
+```
+
+- If an employee with the same email already exists, their record is updated and status 200 is returned.
+- If the email is new, a new record is created and status 201 is returned.
+
+**Response:** Employee object.
+
+---
+
+## Read APIs
+
+All are GET requests, no body needed.
+
+---
+
+### Commits
+
+#### `GET /api/commits/`
+Returns every git commit, newest first. Includes changed files.
+
+**Optional query param:** `?project_id=<uuid>` — filter to commits linked to a project.
+
+#### `GET /api/commits/<sha>/`
+Returns a single commit and its changed files by full SHA.
+
+---
+
+### Jira Tickets
+
+#### `GET /api/tickets/`
+Returns every Jira ticket.
+
+**Optional query param:** `?project_id=<uuid>` — filter to tickets linked to a project.
+
+#### `GET /api/tickets/<issue_key>/`
+Returns a single ticket (e.g. `PAY-221`).
+
+#### `GET /api/tickets/<issue_key>/context/`
+Returns the ticket plus all linked commits, Confluence pages, and meetings via entity references.
+
+**Response:**
+```json
+{
+    "ticket": {...},
+    "linked_commits": [...],
+    "linked_pages": [...],
+    "linked_meetings": [...]
+}
+```
+
+#### `PATCH /api/tickets/<issue_key>/status/`
+Update the status and/or assignee of a ticket.
+
+**Request body:**
+```json
+{
+    "status": "In Progress",
+    "assignee": "Bob Smith"
+}
+```
+
+Both fields are optional — send only what you want to change.
+
+#### `POST /api/tickets/<issue_key>/comments/`
+Add a comment to a ticket. Appended to the ticket's `comments` field with a timestamp.
+
+**Request body:**
+```json
+{
+    "text": "Blocked on the auth PR.",
+    "author": "Alice Chen"
+}
+```
+
+#### `POST /api/tickets/create/`
+Create a new Jira ticket locally. Issue key is auto-generated as `TASK-1001`, `TASK-1002`, etc.
+
+**Request body:**
+```json
+{
+    "summary": "Add dark mode toggle",
+    "description": "Optional longer description",
+    "assignee": "Alice Chen",
+    "priority": "Medium",
+    "issue_type": "Task"
+}
+```
+
+---
+
+### Confluence Pages
+
+#### `GET /api/pages/`
+Returns a lightweight list of all Confluence pages (no full content).
+
+#### `GET /api/pages/<uuid>/`
+Returns a single page with full Markdown content.
+
+---
+
+### Meetings
+
+#### `GET /api/meetings/`
+Returns meetings with metadata and cleaned transcript.
+
+**Optional query params:**
+- `?date=YYYY-MM-DD` — filter by exact meeting date
+- `?project_id=<uuid>` — filter to meetings linked to a project
+
+#### `GET /api/meetings/<uuid>/`
+Returns full meeting details.
+
+---
+
+### Projects
+
+#### `GET /api/projects/`
+Returns all projects with linked entities.
+
+#### `GET /api/projects/<uuid>/`
+Returns a single project.
+
+#### `POST /api/projects/<uuid>/add-member/`
+Append a name to the project's `team_members` list (no-op if already present).
+
+**Request body:**
+```json
+{ "name": "Alice Chen" }
+```
+
+---
+
+### Employees
+
+#### `GET /api/employees/`
+Returns all employees.
+
+#### `GET /api/employees/<uuid>/`
+Returns a single employee record.
+
+---
+
+### Sprints
+
+#### `GET /api/sprints/`
+Returns all sprints with linked tickets. Optional: `?project_id=<uuid>`.
+
+#### `GET /api/sprints/<sprint_number>/`
+Returns a single sprint by number (e.g. `1`, `2`, `3`).
+
+#### `GET /api/sprints/<sprint_number>/tickets/`
+Returns all tickets in the sprint with completion status and summary counts.
+
+**Response:**
+```json
+{
+    "id": "...",
+    "sprint_number": 2,
+    "name": "Sprint 2",
+    "total_tickets": 10,
+    "completed_count": 7,
+    "pending_count": 3,
+    "tickets": [...]
+}
+```
+
+**Optional query param:** `?project_id=<uuid>` — disambiguate when sprint numbers are not unique across projects.
+
+#### `GET /api/sprints/<sprint_number>/meetings/`
+Returns all meetings whose date falls within the sprint's start and end dates.
+
+---
+
+### Decisions
+
+#### `GET /api/decisions/`
+Returns the unified decision timeline across meetings, Confluence, Jira, and commits.
+
+**Optional query params:**
+- `?category=architecture` — filter by category
+- `?source_type=meeting` — filter by source (meeting, confluence, jira, git_commit)
+
+#### `GET /api/decisions/<uuid>/`
+Returns a single decision record.
+
+---
+
+### Search
+
+#### `GET /api/search/?q=<query>`
+Full-text search across commit messages, ticket summaries/descriptions, page titles/content, and meeting titles.
+
+**Response:**
+```json
+{
+    "query": "login",
+    "commits": [...],
+    "tickets": [...],
+    "pages": [...],
+    "meetings": [...]
+}
+```
+
+---
+
+### Activity
+
+#### `GET /api/activity/`
+Returns a blended feed of recent commits, ticket updates, and meetings, sorted newest-first.
+
+**Optional query params:**
+- `?project_id=<uuid>` — filter by project
+- `?limit=<n>` — max number of items (default 20)
+
+---
+
+### Teams Messages
+
+#### `GET /api/teams/messages/`
+Returns Teams messages for a project. Currently returns placeholder data — a real Microsoft Teams integration is not yet implemented.
+
+**Optional query params:**
+- `?project_id=<uuid>`
+- `?channel=<name>` — filter by channel name
 
 ---
 
 ## Ingest APIs
 
 These trigger a sync from an external source into the database. All are POST requests.
-Reads config from `.env` — no request body needed (except meetings which requires a file).
-Safe to run multiple times — will update existing records, not create duplicates.
+Reads config from `.env` — no request body needed (except meetings which requires a file upload).
+Safe to run multiple times — uses `update_or_create`, no duplicates.
 
 ---
 
-### Ingest GitHub Commits
-
-| Method | URL |
-|--------|-----|
-| POST | `/api/ingest/github/` |
+### `POST /api/ingest/github/`
 
 **Requires in `.env`:** `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`
 **Optional in `.env`:** `GITHUB_MAX_COMMITS` (default: 100)
 
-**What it does:** Connects to GitHub API, pulls commits from the configured repo, saves them to the database. Creates entity references linking commits to any Jira ticket keys found in commit messages.
+Pulls commits from the configured GitHub repo. Creates entity references linking commits to Jira ticket keys found in commit messages.
 
 **Response:**
 ```json
-{
-    "source": "github",
-    "repository": "mycompany/backend-api",
-    "created": 5,
-    "updated": 12,
-    "errors": 0,
-    "total": 17
-}
+{ "source": "github", "repository": "mycompany/backend-api", "created": 5, "updated": 12, "errors": 0, "total": 17 }
 ```
 
 ---
 
-### Ingest Jira Tickets
-
-| Method | URL |
-|--------|-----|
-| POST | `/api/ingest/jira/` |
+### `POST /api/ingest/jira/`
 
 **Requires in `.env`:** `JIRA_DOMAIN`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
 **Optional in `.env`:** `JIRA_PROJECT_KEY` (default: PAY), `JIRA_MAX_ISSUES` (default: 500)
 
-**What it does:** Connects to Jira API, pulls all tickets from the configured project, saves them to the database. Creates entity references for epic links.
+Pulls all tickets from the configured Jira project. Creates entity references for epic links.
 
 **Response:**
 ```json
-{
-    "source": "jira",
-    "project": "PAY",
-    "created": 10,
-    "updated": 45,
-    "errors": 0,
-    "total": 55
-}
+{ "source": "jira", "project": "PAY", "created": 10, "updated": 45, "errors": 0, "total": 55 }
 ```
 
 ---
 
-### Ingest Confluence Pages
-
-| Method | URL |
-|--------|-----|
-| POST | `/api/ingest/confluence/` |
+### `POST /api/ingest/confluence/`
 
 **Requires in `.env`:** `CONFLUENCE_DOMAIN`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_SPACE_ID`
 **Optional in `.env`:** `CONFLUENCE_SPACE_KEY` (default: ONBOARD)
 
-**What it does:** Connects to Confluence API, pulls all pages from the configured space, converts HTML to Markdown, saves to the database. Creates entity references for any Jira ticket keys found in page content.
+Pulls all pages from the configured Confluence space, converts HTML to Markdown. Creates entity references for Jira ticket keys found in page content.
 
 **Response:**
 ```json
-{
-    "source": "confluence",
-    "space": "ONBOARD",
-    "created": 3,
-    "updated": 8,
-    "errors": 0,
-    "total": 11
-}
+{ "source": "confluence", "space": "ONBOARD", "created": 3, "updated": 8, "errors": 0, "total": 11 }
 ```
 
 ---
 
-### Ingest Meeting (VTT file upload)
-
-| Method | URL |
-|--------|-----|
-| POST | `/api/ingest/meetings/` |
+### `POST /api/ingest/meetings/`
 
 **No `.env` vars needed.**
 
-**How to send in Postman:**
-1. Method: `POST`
-2. URL: `http://127.0.0.1:8000/api/ingest/meetings/`
-3. Go to **Body** tab → select **form-data**
-4. Add a row: Key = `file`, change type dropdown to **File**, upload your `.vtt` file
-5. Click Send
+Upload a `.vtt` transcript file as `multipart/form-data` with key `file`. Extracts speakers and duration. Uploading the same filename again updates the existing record.
 
-**What it does:** Reads the uploaded VTT transcript, extracts speakers and duration, saves the meeting to the database. Creates entity references for any Jira ticket keys mentioned in the transcript.
-Uploading the same filename again will **update** the existing record, not create a duplicate.
+**In Postman:** Body → form-data → Key: `file`, type: File, upload `.vtt`
 
 **Response:**
 ```json
@@ -453,49 +446,42 @@ Uploading the same filename again will **update** the existing record, not creat
 }
 ```
 
-> `"created": true` means a new record was created. `"created": false` means an existing record was updated.
+> `"created": true` = new record. `"created": false` = existing record updated.
 
 ---
 
 ## Delete API
 
-One common endpoint to delete any record from the database.
+### `DELETE /api/delete/<entity_type>/<id>/`
 
-| Method | URL |
-|--------|-----|
-| DELETE | `/api/delete/<entity_type>/<id>/` |
-
-### entity_type and id reference
-
-| What to delete | `entity_type` | `id` to use | Example |
-|----------------|--------------|-------------|---------|
-| Commit | `commits` | SHA | `a3f9c12ef...` |
-| Jira Ticket | `tickets` | Issue key | `PAY-221` |
-| Confluence Page | `pages` | UUID | `550e8400-...` |
-| Meeting | `meetings` | UUID | `550e8400-...` |
-| Project | `projects` | UUID | `550e8400-...` |
-| Employee | `employees` | UUID | `550e8400-...` |
-| Sprint | `sprints` | UUID | `550e8400-...` |
-| Decision | `decisions` | UUID | `550e8400-...` |
-
-### How to use in Postman
-1. Method: `DELETE`
-2. Build the URL using the table above, e.g.:
-   - `http://127.0.0.1:8000/api/delete/meetings/550e8400-e29b-41d4-a716-446655440000/`
-   - `http://127.0.0.1:8000/api/delete/tickets/PAY-221/`
-   - `http://127.0.0.1:8000/api/delete/commits/a3f9c12.../`
-3. No body needed
-4. Click Send
+| What to delete | `entity_type` | `id` to use |
+|----------------|--------------|-------------|
+| Commit | `commits` | Full SHA |
+| Jira Ticket | `tickets` | Issue key (e.g. `PAY-221`) |
+| Confluence Page | `pages` | UUID |
+| Meeting | `meetings` | UUID |
+| Project | `projects` | UUID |
+| Employee | `employees` | UUID |
+| Sprint | `sprints` | UUID |
+| Decision | `decisions` | UUID |
 
 **Response:**
 ```json
 { "deleted": true, "entity_type": "meetings", "id": "550e8400-..." }
 ```
 
-**Error — wrong entity type:**
+**Error — unknown entity type:**
 ```json
-{ "error": "Unknown entity type \"foo\". Choose from: commits, tickets, pages, meetings, projects" }
+{ "error": "Unknown entity type \"foo\". Choose from: commits, tickets, pages, meetings, projects, employees, sprints, decisions" }
 ```
+
+---
+
+## Test
+
+### `GET /api/test/`
+
+Health check — returns `{ "message": "hello preety" }`. Use to verify the server is up.
 
 ---
 
@@ -504,17 +490,19 @@ One common endpoint to delete any record from the database.
 | Status | Message | Fix |
 |--------|---------|-----|
 | `400` | `GITHUB_TOKEN not set in environment` | Add `GITHUB_TOKEN` to `.env` and restart server |
-| `400` | `GITHUB_OWNER and GITHUB_REPO must be set` | Add both to `.env` and restart server |
-| `400` | `No file uploaded` | In Postman Body → form-data, set key `file` with type File |
-| `400` | `File must be a .vtt file` | Make sure you are uploading a `.vtt` file |
-| `400` | `Unknown entity type` | Check spelling — valid types are: commits, tickets, pages, meetings, projects |
-| `404` | Not Found | The ID doesn't exist — use the list endpoint first to get valid IDs |
+| `400` | `GITHUB_OWNER and GITHUB_REPO must be set` | Add both to `.env` and restart |
+| `400` | `No file uploaded` | Body → form-data → set key `file` with type File |
+| `400` | `File must be a .vtt file` | Only `.vtt` files are accepted |
+| `400` | `Unknown entity type` | Valid types: `commits tickets pages meetings projects employees sprints decisions` |
+| `404` | Not Found | The ID doesn't exist — use the list endpoint to find valid IDs |
+| `503` | Failed to initialize chatbot | `GROQ_API_KEY` is missing or invalid in `.env` |
 | `500` | Internal Server Error | Check the terminal running `runserver` for the full traceback |
 
 ---
 
 ## Notes
 
-- Always include the **trailing slash** in URLs — e.g. `/api/ingest/meetings/` not `/api/ingest/meetings`
-- Ingest endpoints are **synchronous** — Postman will wait until the sync is fully complete before showing the response. Large syncs (500 Jira tickets) may take a few minutes.
-- Ingest endpoints use **update_or_create** — running them multiple times is safe, it won't create duplicates.
+- Always include the **trailing slash** in URLs — `/api/chat/` not `/api/chat`
+- Ingest endpoints are **synchronous** — the request blocks until the sync completes. Large Jira syncs (500 tickets) can take a few minutes.
+- Ingest endpoints use **update_or_create** — safe to run multiple times, no duplicates created.
+- The Swagger UI at `/api/docs/` documents every endpoint with request/response schemas.

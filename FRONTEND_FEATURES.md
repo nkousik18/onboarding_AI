@@ -1,4 +1,4 @@
-# EX-CDI Frontend — Feature Documentation
+# LIGHTHOUSE Frontend — Feature Documentation
 
 > **Generated**: March 7, 2026  
 > **Stack**: Vanilla JS (no framework) · Vite 6.2.0 · Dark sci-fi theme  
@@ -218,7 +218,7 @@ Gives team members a comprehensive, real-time view of their project's state — 
 
 | Feature | Description |
 |---|---|
-| **Animated Orbit** | Central EX-CDI logo with 4 orbiting icons (Jira, GitHub, Teams, Confluence) |
+| **Animated Orbit** | Central LIGHTHOUSE logo with 4 orbiting icons (Jira, GitHub, Teams, Confluence) |
 | **Progress Bar** | Animated fill bar with phase text: "Connecting to knowledge base" → "Fetching sprints & project data" → "Loading integrations" → "Preparing AI insights" |
 | **Auto-dismiss** | Disappears when all parallel data fetches complete |
 
@@ -285,7 +285,7 @@ Provides a dedicated view to inspect the raw data flowing in from external tools
 **Available on**: `project_dashboard.html`, `workspace.html`, `integrations.html`  
 
 ### What It Is
-A persistent AI assistant panel that slides out from the right side of the screen, powered by the OnboardingChatbot backend via GPT-4o (Bytez API).
+A persistent AI assistant panel that slides out from the right side of the screen, powered by the OnboardingChatbot backend via Groq (llama-3.3-70b-versatile).
 
 ### Why It's Used
 Enables natural-language Q&A about the project — users can ask about decisions, commits, tickets, meetings, and team members without manually navigating through data.

@@ -1,16 +1,17 @@
 """
-Meeting Summarization Script using DSPy + Bytez API
+Meeting Summarization Script
 
-This script uses DSPy concepts (Signatures, Modules, ChainOfThought)
-with Bytez as the LLM backend.
+Reads raw VTT transcripts from the meetings table and fills in summary,
+key_decisions, and action_items using Groq (llama-3.3-70b-versatile).
 
 Usage:
-    python scripts/summarize_meetings.py
-    python scripts/summarize_meetings.py --meeting-id <uuid>
     python scripts/summarize_meetings.py --all
+    python scripts/summarize_meetings.py --meeting-id <uuid>
+    python scripts/summarize_meetings.py --force    # reprocess all
+    python scripts/summarize_meetings.py --dry-run
 
 Requirements:
-    pip install bytez
+    GROQ_API_KEY in database/.env
 """
 
 import os
@@ -538,7 +539,7 @@ def update_meeting_in_db(meeting: Meeting, analysis: dict):
 # ============================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Summarize meetings using DSPy + Bytez')
+    parser = argparse.ArgumentParser(description='Summarize meeting transcripts using Groq')
     parser.add_argument('--meeting-id', type=str, help='Process specific meeting')
     parser.add_argument('--all', action='store_true', help='Process all without summaries')
     parser.add_argument('--force', action='store_true', help='Reprocess all')
@@ -549,9 +550,9 @@ def main():
     
     # Setup
     print("="*60)
-    print("DSPy-Style Meeting Summarizer with Bytez Backend")
+    print("Meeting Summarizer (Groq / llama-3.3-70b-versatile)")
     print("="*60)
-    print(f"\nInitializing Bytez LM...")
+    print(f"\nInitializing Groq client...")
     print(f"  API Key: {GROQ_API_KEY[:10]}...")
     print(f"  Model: {args.model}")
     
