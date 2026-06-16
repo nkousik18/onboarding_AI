@@ -1,6 +1,19 @@
-# ex-cdi — Django Project
+# LIGHTHOUSE — AI Onboarding Assistant
 
-Backend of the ex-cdi project. Built with Django 5.2 and PostgreSQL.
+An AI-powered employee onboarding assistant that aggregates institutional knowledge from GitHub, Jira, Confluence, and meeting transcripts into a unified knowledge base. New hires ask natural-language questions and get grounded answers with source citations instead of digging through four disconnected tools.
+
+Built for **DAE AI Hackathon 2026**.
+
+---
+
+## What's Inside
+
+| Surface | Description |
+|---------|-------------|
+| **Django REST API** | 34 endpoints — ingestion, chat, read, write, delete |
+| **AI Chatbot** | Groq LLMs, 12 intent types, multi-turn conversation |
+| **Vite Frontend** | 8-page vanilla JS app (no framework) |
+| **Chrome Extension** | Manifest V3 side panel — access from any web page |
 
 ---
 
@@ -8,168 +21,193 @@ Backend of the ex-cdi project. Built with Django 5.2 and PostgreSQL.
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Python 3.11 |
-| Framework | Django 5.2 |
-| REST API | Django REST Framework |
-| API Docs | drf-spectacular (Swagger UI) |
-| CORS | django-cors-headers |
-| Database | PostgreSQL |
-| DB Driver | psycopg2-binary |
+| Language | Python 3.12 |
+| Backend framework | Django 5.2 + Django REST Framework |
+| API docs | drf-spectacular (Swagger UI at `/api/docs/`) |
+| Database | PostgreSQL (Render) |
+| LLM — generation | Groq `llama-3.3-70b-versatile` |
+| LLM — classification | Groq `llama-3.1-8b-instant` |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (384-dim) |
+| Frontend | Vite 6.2 + Vanilla JS |
+| Chrome extension | Manifest V3 side panel |
 | Env management | python-dotenv |
-| AI / LLM | Bytez API (GPT-4o) |
 
 ---
 
 ## Project Structure
 
 ```
-ex-cdi/
-├── manage.py               ← Django CLI tool
-├── .env                    ← local secrets (never commit)
-├── .env.example            ← template for .env
-├── .gitignore
+Onboarding_AI/
+├── manage.py
+├── .env                         ← secrets (never commit)
 ├── requirements.txt
-├── venv/                   ← virtual environment
-├── config/                 ← project-level config
-│   ├── settings.py         ← all project settings
-│   ├── urls.py             ← root URL routing
-│   ├── wsgi.py             ← production WSGI entry point
-│   └── asgi.py             ← production ASGI entry point
-├── api/                    ← REST API layer
-│   ├── urls.py             ← all API route definitions
-│   ├── views.py            ← all API views
-│   ├── serializers.py      ← data serializers
-│   └── ingestion.py        ← GitHub / Jira / Confluence ingest logic
-├── knowledge_base/         ← database models
-│   └── models.py           ← GitCommit, JiraTicket, Meeting, Decision, etc.
-├── chatbot/                ← AI chatbot module
-│   ├── main.py             ← main orchestrator (OnboardingChatbot)
-│   ├── intent/             ← intent classification
-│   ├── retriever/          ← SQL-based data retrieval
-│   ├── context/            ← context building for LLM
-│   └── llm/                ← Bytez/GPT-4o wrapper
-├── frontend/               ← static frontend assets
-│   └── static/
-│       └── js/
-│           └── solution_chat.js  ← AI chat panel
-└── my_app/                 ← legacy app (kept for compatibility)
+│
+├── config/                      ← Django project config
+│   ├── settings.py
+│   └── urls.py
+│
+├── api/                         ← REST API (34 endpoints)
+│   ├── views.py                 ← all views (~1 238 lines)
+│   ├── urls.py                  ← all routes
+│   ├── serializers.py           ← DRF serializers
+│   └── ingestion.py             ← GitHub / Jira / Confluence / VTT ingest
+│
+├── chatbot/                     ← AI chatbot module
+│   ├── main.py                  ← OnboardingChatbot orchestrator
+│   ├── intent/                  ← LLM-first classifier (12 intents)
+│   ├── retriever/               ← SQL retrieval + PeopleRegistry
+│   ├── context/                 ← context builder (8 000 char cap)
+│   └── llm/                     ← Groq wrapper (BytezLLM class)
+│
+├── database/                    ← raw SQL schema + scripts
+│   ├── scripts/                 ← standalone ingestion / analysis scripts
+│   └── knowledge_base/models.py ← 10 Django models (managed=False)
+│
+├── frontend/                    ← Vite MPA (8 pages)
+│   ├── vite.config.js           ← dev server port 3000, proxy → 8000
+│   ├── *.html                   ← login, register, dashboard, integrations, etc.
+│   └── static/js/               ← 6 JS modules
+│
+├── chrome-extension-poc/        ← Chrome side panel extension
+│   ├── manifest.json
+│   ├── popup.html / popup.js    ← 4-tab panel + persistent chat
+│   ├── background.js            ← service worker
+│   └── content.js               ← floating button injected on all pages
+│
+└── docs/                        ← all project documentation
+    ├── resume_project_doc.md    ← condensed source of truth (all layers)
+    ├── DECISION_INTELLIGENCE_CHANGES.md
+    └── ...
 ```
 
 ---
 
-## Team Documentation
+## Quick Start
 
-| Who | Read this |
-|-----|-----------|
-| Front-end developers | [FRONTEND_README.md](./FRONTEND_README.md) |
-| Back-end developers | This file |
+### 1 — Backend
 
----
-
-## Local Setup (Backend)
-
-**1. Clone the repo and navigate into the project**
 ```bash
-cd ex-cdi
-```
+git clone https://github.com/nkousik18/onboarding_AI.git
+cd onboarding_AI
 
-**2. Create and activate the virtual environment**
-```bash
 python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\Activate.ps1
 
-# Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# Mac/Linux
-source venv/bin/activate
-```
-
-**3. Install dependencies**
-```bash
 pip install -r requirements.txt
+
+cp .env.example .env              # fill in values (see below)
+
+python manage.py runserver        # http://localhost:8000
 ```
 
-**4. Set up environment variables**
+> **Do not run `makemigrations` or `migrate`.**
+> All models use `managed = False` — the database schema is created by raw SQL scripts in `database/scripts/`.
+
+### 2 — Frontend
+
 ```bash
-cp .env.example .env
-```
-Open `.env` and fill in all values. See the Environment Variables section below.
-
-**5. Apply database migrations**
-```bash
-python manage.py migrate
+cd frontend
+npm install
+npm run dev                       # http://localhost:3000
 ```
 
-**6. Create a superuser (admin account)**
-```bash
-python manage.py createsuperuser
-```
+Vite proxies `/api` → `http://localhost:8000`. Keep Django running.
 
-**7. Run the development server**
-```bash
-python manage.py runserver
-```
+### 3 — Chrome Extension
 
-Server runs at `http://127.0.0.1:8000`
-Admin panel at `http://127.0.0.1:8000/admin`
+1. Open `chrome://extensions/`
+2. Enable **Developer mode**
+3. Click **Load unpacked** → select `chrome-extension-poc/`
+4. Click the extension icon or the floating button on any page
 
 ---
 
 ## Environment Variables
 
-All secrets live in `.env`. Never commit this file. Use `.env.example` as the template.
+All secrets in `.env` at the project root. Never commit this file.
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `SECRET_KEY` | Django secret key — keep this private | `django-insecure-...` |
-| `DEBUG` | `True` in development, `False` in production | `True` |
-| `DB_NAME` | PostgreSQL database name | `ex_cdi_db` |
-| `DB_USER` | PostgreSQL username | `ex_cdi_user` |
-| `DB_PASSWORD` | PostgreSQL password | `changeme` |
-| `DB_HOST` | Database host | `localhost` |
-| `DB_PORT` | Database port | `5432` |
-| `BYTEZ_API_KEY` | API key for Bytez (GPT-4o) — powers the AI chatbot | `your_key_here` |
+```env
+# Django
+SECRET_KEY=your_django_secret_key
+DEBUG=True
+
+# Database (Render PostgreSQL)
+DB_NAME=project_knowledge
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_HOST=your-host.render.com
+DB_PORT=5432
+
+# Groq (powers the AI chatbot)
+# Get key: console.groq.com → API Keys
+GROQ_API_KEY=your_groq_api_key
+
+# GitHub
+GITHUB_TOKEN=your_personal_access_token
+GITHUB_OWNER=org_or_username
+GITHUB_REPO=repository_name
+GITHUB_MAX_COMMITS=100
+
+# Jira
+JIRA_DOMAIN=yourcompany.atlassian.net
+JIRA_EMAIL=your@email.com
+JIRA_API_TOKEN=your_jira_api_token
+JIRA_PROJECT_KEY=PAY
+JIRA_MAX_ISSUES=500
+
+# Confluence (same Atlassian token as Jira)
+CONFLUENCE_DOMAIN=yourcompany.atlassian.net
+CONFLUENCE_EMAIL=your@email.com
+CONFLUENCE_API_TOKEN=your_confluence_api_token
+CONFLUENCE_SPACE_ID=your_space_id
+CONFLUENCE_SPACE_KEY=ONBOARD
+```
+
+---
+
+## Key Endpoints
+
+| Method | Endpoint | What it does |
+|--------|----------|-------------|
+| `POST` | `/api/chat/` | Ask the AI chatbot (multi-turn) |
+| `POST` | `/api/register/` | Create / update an employee record |
+| `POST` | `/api/ingest/github/` | Pull commits from GitHub |
+| `POST` | `/api/ingest/jira/` | Pull tickets from Jira |
+| `POST` | `/api/ingest/confluence/` | Pull pages from Confluence |
+| `POST` | `/api/ingest/meetings/` | Upload a `.vtt` meeting transcript |
+| `GET` | `/api/decisions/` | Unified decision timeline |
+| `GET` | `/api/search/?q=<query>` | Full-text search across all entities |
+| `GET` | `/api/docs/` | Swagger UI (all 34 endpoints) |
 
 ---
 
 ## Common Commands
 
 ```bash
-# Run development server
+# Run Django dev server
 python manage.py runserver
 
-# Create database migrations after changing models
-python manage.py makemigrations
-
-# Apply migrations to the database
-python manage.py migrate
-
-# Open Django shell (Python REPL with Django loaded)
+# Open Django shell
 python manage.py shell
 
-# Run tests
-python manage.py test
+# Run the chatbot CLI directly (no server needed)
+python -m chatbot.main
 
-# Check for project issues
-python manage.py check
-
-# Collect static files (production only)
-python manage.py collectstatic
+# Test intent classifier
+python -m chatbot.intent.classifier
 ```
 
 ---
 
-## Adding a New App
+## Documentation
 
-```bash
-python manage.py startapp app_name
-```
-
-Then register it in `config/settings.py` under `INSTALLED_APPS`:
-```python
-INSTALLED_APPS = [
-    ...
-    'app_name',
-]
-```
-
+| Doc | What it covers |
+|-----|---------------|
+| [`docs/resume_project_doc.md`](docs/resume_project_doc.md) | Condensed source of truth — all layers, quantifiable stats |
+| [`API_DOCS.md`](API_DOCS.md) | All 34 endpoints with request/response examples |
+| [`FRONTEND_README.md`](FRONTEND_README.md) | Frontend pages, JS modules, auth model, build |
+| [`FRONTEND_FEATURES.md`](FRONTEND_FEATURES.md) | Feature-by-feature breakdown of every page |
+| [`chatbot/README.md`](chatbot/README.md) | Chatbot pipeline, 12 intents, models, configuration |
+| [`chrome-extension-poc/README.md`](chrome-extension-poc/README.md) | Extension setup, tabs, API endpoints used |
+| [`database/Database.md`](database/Database.md) | Schema, 10 models, raw SQL setup |
+| [`docs/DECISION_INTELLIGENCE_CHANGES.md`](docs/DECISION_INTELLIGENCE_CHANGES.md) | All 8 Decision Intelligence changes |
