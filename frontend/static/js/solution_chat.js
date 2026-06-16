@@ -3,7 +3,7 @@
    ============================================================
    AI-powered assistant panel backed by the real OnboardingChatbot
    on the Django backend (/api/chat/). Supports multi-turn
-   conversation memory, intent classification, and GPT-4o responses.
+   conversation memory, intent classification, and Groq responses.
    ============================================================ */
 
 const Solution = (() => {

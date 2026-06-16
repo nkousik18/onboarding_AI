@@ -796,7 +796,7 @@ class ChatView(APIView):
         description=(
             'Send a natural-language query to the onboarding AI chatbot. '
             'The bot classifies intent, retrieves relevant records from the knowledge base, '
-            'builds context, and generates a response via GPT-4o. '
+            'builds context, and generates a response via Groq. '
             'Pass `conversation_id` from a previous response to continue an existing conversation '
             '(the bot remembers prior turns and resolves references like "it" or "that decision"). '
             'Omit `conversation_id` to start a fresh session.'
@@ -1199,21 +1199,6 @@ class CreateTicketView(APIView):
         )
         
         return Response(JiraTicketSerializer(ticket).data, status=201)
-
-
-class EmployeeListView(generics.ListAPIView):
-    """GET /api/employees/ — list all team members for assignment."""
-
-    serializer_class = EmployeeSerializer
-    queryset = Employee.objects.all()
-
-    @extend_schema(
-        tags=['Employees'],
-        summary='List team members',
-        description='Get all employees for task assignment purposes.',
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
 
 
 class DeleteView(APIView):

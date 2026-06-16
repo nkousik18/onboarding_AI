@@ -1,12 +1,8 @@
 """
-Onboarding AI Chatbot - Main Entry Point (Conversational Version v3)
+LIGHTHOUSE Onboarding AI Chatbot — Main orchestrator.
 
-Fixes applied:
-1. Topic command now works as CLI command
-2. Better context retention for follow-ups
-3. Improved person query handling
-4. List all X queries support
-5. Role/topic to person mapping
+Implements multi-turn conversation with intent classification, SQL-backed
+retrieval, context assembly, and Groq LLM response generation.
 """
 
 from typing import Optional, List, Tuple, Dict
@@ -233,7 +229,7 @@ class OnboardingChatbot:
         self._log("  ✓ Context Builder loaded")
         
         self.llm = BytezLLM()
-        self._log("  ✓ LLM (Bytez/GPT-4o) loaded")
+        self._log("  ✓ LLM (Groq) loaded")
         
         self.history = ConversationHistory()
         self._log("  ✓ Conversation History initialized")

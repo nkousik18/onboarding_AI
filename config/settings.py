@@ -157,11 +157,12 @@ REST_FRAMEWORK = {
 
 # drf-spectacular – OpenAPI 3.0 schema generation
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'Ex-CDI Knowledge Base API',
+    'TITLE': 'LIGHTHOUSE — Onboarding Knowledge Base API',
     'DESCRIPTION': (
-        'API for the Ex-CDI onboarding knowledge base.\n\n'
+        'REST API for the LIGHTHOUSE AI onboarding assistant.\n\n'
         '**Capabilities:**\n'
-        '- Browse Git commits, Jira tickets, Confluence pages, meetings, and projects\n'
+        '- Chat with the onboarding AI (Groq / llama-3.3-70b-versatile)\n'
+        '- Browse Git commits, Jira tickets, Confluence pages, meetings, sprints, and decisions\n'
         '- Full-text search across all entity types\n'
         '- Ingest data from GitHub, Jira, Confluence, and meeting VTT files\n'
         '- Delete any entity by type and ID\n'
@@ -170,6 +171,8 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
     'TAGS': [
+        {'name': 'Chat',       'description': 'AI chatbot (Groq / llama-3.3-70b-versatile)'},
+        {'name': 'Auth',       'description': 'Registration and user identity'},
         {'name': 'Commits',    'description': 'Git commit data'},
         {'name': 'Tickets',    'description': 'Jira ticket data'},
         {'name': 'Pages',      'description': 'Confluence page data'},
@@ -180,6 +183,9 @@ SPECTACULAR_SETTINGS = {
         {'name': 'Decisions',  'description': 'Unified decision timeline'},
         {'name': 'Search',     'description': 'Cross-entity full-text search'},
         {'name': 'Ingestion',  'description': 'Pull data from external sources'},
+        {'name': 'Teams',      'description': 'Microsoft Teams messages (placeholder)'},
+        {'name': 'Activity',   'description': 'Recent project activity feed'},
         {'name': 'Delete',     'description': 'Remove records'},
+        {'name': 'Test',       'description': 'Health check'},
     ],
 }

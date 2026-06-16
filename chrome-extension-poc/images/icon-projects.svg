@@ -1,0 +1,10 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Folder outline -->
+  <path d="M 2 5 L 2 20 Q 2 22 4 22 L 20 22 Q 22 22 22 20 L 22 7 Q 22 5 20 5 L 11 5 L 9 3 L 4 3 Q 2 3 2 5 Z" 
+        fill="none" stroke="#1e8fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Document icon inside -->
+  <line x1="7" y1="10" x2="7" y2="18" stroke="#1e8fff" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
+  <line x1="11" y1="10" x2="11" y2="18" stroke="#1e8fff" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
+  <line x1="15" y1="10" x2="15" y2="18" stroke="#1e8fff" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
+</svg>

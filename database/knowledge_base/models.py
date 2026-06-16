@@ -314,10 +314,6 @@ class Employee(models.Model):
     def __str__(self):
         return self.name
     
-# ==========================================
-# ADD THESE MODELS TO YOUR models.py FILE
-# ==========================================
-
 class Sprint(models.Model):
     """Stores sprint information"""
     
@@ -372,10 +368,6 @@ class SprintTicket(models.Model):
     
     def __str__(self):
         return f"{self.sprint.name} - {self.ticket.issue_key}"
-
-# ============================================
-# ADD THIS MODEL TO knowledge_base/models.py
-# ============================================
 
 class Decision(models.Model):
     """

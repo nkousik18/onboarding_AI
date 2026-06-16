@@ -67,7 +67,7 @@ urlpatterns = [
     # Search
     path("search/", views.SearchView.as_view(), name="search"),
     # test
-    path("test/", views.HelloPreetyView.as_view(), name="search"),
+    path("test/", views.HelloPreetyView.as_view(), name="test"),
     # Ingest
     path("ingest/github/", views.IngestGithubView.as_view(), name="ingest-github"),
     path("ingest/jira/", views.IngestJiraView.as_view(), name="ingest-jira"),
